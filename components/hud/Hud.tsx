@@ -1,15 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FULL } from "@/lib/game/constants";
 import type { Engine, Snapshot } from "@/lib/game/engine";
 import { UI } from "@/lib/game/i18n";
 import { PhraseSheet } from "./PhraseSheet";
 
-function Cup({ level }: { level: number }) {
+function Cup({ level, full }: { level: number; full: number }) {
   return (
     <span className="cup">
-      {Array.from({ length: FULL }, (_, i) => FULL - i).map((n) => (
+      {Array.from({ length: full }, (_, i) => full - i).map((n) => (
         <i key={n} className={level >= n ? "f" : ""} />
       ))}
     </span>
@@ -47,7 +46,7 @@ export function Hud({ snap, engine }: { snap: Snapshot; engine: Engine }) {
           {snap.targets.map((t) => (
             <button key={t.id} type="button" className={"chip" + (t.id === snap.selTarget ? " sel" : "")} onClick={() => engine.setTarget(t.id)}>
               <span>{t.nick || "?"}</span>
-              <Cup level={t.glass} />
+              <Cup level={t.glass} full={snap.full} />
             </button>
           ))}
         </div>

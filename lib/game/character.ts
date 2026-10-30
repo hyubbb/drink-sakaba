@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { Dish } from "./constants";
+import { VENUE_DRINK, type Dish, type DrinkStyle } from "./constants";
 import { basic, box, cyl, lam } from "./mesh";
 
 export type AnimKind = "drink" | "pour" | "eat" | "cheer" | "talk";
@@ -28,7 +28,13 @@ const blackMat = basic(0x141414);
 const blushMat = basic(0xf09aa4);
 
 /** souka-style mascot: round head, dot eyes, blush, hachimaki headband in the player's colour. */
-export function makeChar(parent: THREE.Object3D, col: number, bodyCol: number, bandCol?: number): Avatar {
+/**
+ * souka-style mascot. `bandOrDrink` is the headband colour (defaults to `col`) or, when omitted,
+ * the venue's drink style, which shapes the glass and bottle the character holds.
+ */
+export function makeChar(parent: THREE.Object3D, col: number, bodyCol: number, bandOrDrink?: number | DrinkStyle, drinkArg?: DrinkStyle): Avatar {
+  const bandCol = typeof bandOrDrink === "number" ? bandOrDrink : undefined;
+  const drink = (typeof bandOrDrink === "object" ? bandOrDrink : drinkArg) ?? VENUE_DRINK.izakaya;
   const root = new THREE.Group();
   const cloth = lam(bodyCol), accent = lam(col), band = lam(bandCol ?? col);
   const hip = new THREE.Group();
@@ -85,17 +91,23 @@ export function makeChar(parent: THREE.Object3D, col: number, bodyCol: number, b
 
   const handGlass = new THREE.Group();
   hip.add(handGlass);
-  cyl(0.065, 0.055, 0.17, 8, new THREE.MeshLambertMaterial({ color: 0xf1b53d, transparent: true, opacity: 0.9 }), 0, 0, 0, handGlass);
-  cyl(0.066, 0.066, 0.035, 8, lam(0xfff6e0), 0, 0.09, 0, handGlass);
+  // the same glass that stands on the table, full
+  const G = drink.glass;
+  cyl(G.rt, G.rb, G.h, 8, new THREE.MeshLambertMaterial({ color: 0xdff2ff, transparent: true, opacity: 0.32 }), 0, 0, 0, handGlass);
+  cyl(G.rt * 0.88, G.rb * 0.9, G.h * 0.9, 8, new THREE.MeshLambertMaterial({ color: G.liquid, transparent: true, opacity: G.liquidOpacity }), 0, -G.h * 0.04, 0, handGlass);
+  if (G.foam) cyl(G.rt * 0.9, G.rt * 0.9, 0.03, 8, lam(0xfff6e0), 0, G.h * 0.42, 0, handGlass);
   handGlass.visible = false;
 
   const armR = arms[1];
   const handBottle = new THREE.Group();
   handBottle.position.set(0, -0.36, 0.08);
   armR.add(handBottle);
-  const bm = lam(0x5b2d1a);
-  cyl(0.07, 0.075, 0.3, 7, bm, 0, 0, 0, handBottle);
-  cyl(0.025, 0.04, 0.12, 6, bm, 0, 0.2, 0, handBottle);
+  // the venue's bottle: brown beer bottle or green soju bottle
+  const B = drink.bottle;
+  const bm = new THREE.MeshLambertMaterial({ color: B.color, transparent: B.opacity < 1, opacity: B.opacity });
+  cyl(B.body[0], B.body[1], B.body[2], 7, bm, 0, 0, 0, handBottle);
+  cyl(B.neck[0], B.neck[1], B.neck[2], 6, bm, 0, B.body[2] / 2 + B.neck[2] / 2, 0, handBottle);
+  cyl(B.body[0] + 0.004, B.body[0] + 0.004, B.body[2] * 0.35, 7, lam(B.label), 0, -B.body[2] * 0.05, 0, handBottle);
   handBottle.visible = false;
 
   const handBite = new THREE.Group();

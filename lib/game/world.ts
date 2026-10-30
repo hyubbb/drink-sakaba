@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { FULL, TABLES, VENUE_DISHES, clampInt, type Dish, type Venue } from "./constants";
+import { TABLES, VENUE_DISHES, VENUE_DRINK, clampInt, type Dish, type Venue } from "./constants";
 import { basic, box, ctex, cyl, lam } from "./mesh";
 
 export type Seat = {
@@ -50,11 +50,13 @@ export function buildWorld(scene: THREE.Scene, venue: Venue): World {
   const seats: Record<string, Seat> = {};
   const F = furniture;
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xdff2ff, transparent: true, opacity: 0.32 });
-  const liquidMat = new THREE.MeshLambertMaterial({ color: F.glass.liquid, transparent: true, opacity: F.glass.liquidOpacity });
+  // glass and bottle come from the venue's drink style, so the table glass matches the one in hand
+  const D = VENUE_DRINK[venue];
+  const liquidMat = new THREE.MeshLambertMaterial({ color: D.glass.liquid, transparent: true, opacity: D.glass.liquidOpacity });
   const foamMat = lam(0xfff6e0);
   const cushionMat = F.cushion !== null ? lam(F.cushion) : null;
   const hiMat = new THREE.MeshLambertMaterial({ color: F.cushion ?? 0xffffff, emissive: 0x553300 });
-  const G = F.glass;
+  const G = D.glass, B = D.bottle;
 
   for (const t of TABLES) {
     const tg = new THREE.Group();
@@ -66,9 +68,9 @@ export function buildWorld(scene: THREE.Scene, venue: Venue): World {
       const bg = new THREE.Group();
       bg.position.set(bx, 0.8, 0);
       tg.add(bg);
-      const bm = new THREE.MeshLambertMaterial({ color: F.bottle, transparent: venue === "pocha", opacity: venue === "pocha" ? 0.85 : 1 });
-      cyl(0.075, 0.08, 0.34, 7, bm, 0, 0.17, 0, bg);
-      cyl(0.025, 0.04, 0.13, 6, bm, 0, 0.4, 0, bg);
+      const bm = new THREE.MeshLambertMaterial({ color: B.color, transparent: B.opacity < 1, opacity: B.opacity });
+      cyl(B.body[0], B.body[1], B.body[2], 7, bm, 0, B.body[2] / 2, 0, bg);
+      cyl(B.neck[0], B.neck[1], B.neck[2], 6, bm, 0, B.body[2] + B.neck[2] / 2, 0, bg);
       const lb = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.082, 0.12, 7, 1, true), lam(0xffffff, F.bottleLabel));
       lb.position.y = 0.15;
       bg.add(lb);
@@ -121,8 +123,9 @@ export function buildWorld(scene: THREE.Scene, venue: Venue): World {
     plates,
     lanterns,
     setGlass(seat, level) {
-      const L = clampInt(level, 0, FULL);
-      const h = L / FULL;
+      const full = VENUE_DRINK[venue].sips;
+      const L = clampInt(level, 0, full);
+      const h = L / full;
       seat.glass.liquid.visible = L > 0;
       seat.glass.liquid.scale.y = Math.max(h, 0.001);
       seat.glass.liquid.position.y = G.h * 0.45 * h + 0.005;

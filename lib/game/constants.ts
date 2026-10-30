@@ -1,5 +1,3 @@
-/** A glass is finished in this many sips; pouring always fills it to FULL. */
-export const FULL = 3;
 
 /** People allowed in one channel (12 seats + a few walking around). */
 export const CHANNEL_CAPACITY = 16;
@@ -8,6 +6,26 @@ export const CHANNEL_COUNT = 5;
 
 export type Venue = "izakaya" | "pocha";
 export const VENUES: Venue[] = ["izakaya", "pocha"];
+/** What is poured at each venue: beer in a glass for three sips, or a soju shot in one. */
+export type DrinkStyle = {
+  /** sips to empty a full glass; pouring always fills it to this */
+  sips: number;
+  glass: { rt: number; rb: number; h: number; liquid: number; liquidOpacity: number; foam: boolean };
+  bottle: { color: number; opacity: number; body: [number, number, number]; neck: [number, number, number]; label: number };
+};
+export const VENUE_DRINK: Record<Venue, DrinkStyle> = {
+  izakaya: {
+    sips: 3,
+    glass: { rt: 0.075, rb: 0.062, h: 0.2, liquid: 0xf1b53d, liquidOpacity: 0.92, foam: true },
+    bottle: { color: 0x5b2d1a, opacity: 1, body: [0.075, 0.08, 0.34], neck: [0.025, 0.04, 0.13], label: 0xf2e7cd },
+  },
+  pocha: {
+    sips: 1,
+    glass: { rt: 0.055, rb: 0.042, h: 0.11, liquid: 0xcfe9ff, liquidOpacity: 0.85, foam: false },
+    bottle: { color: 0x3fa34d, opacity: 0.88, body: [0.058, 0.062, 0.27], neck: [0.02, 0.034, 0.1], label: 0xe9f4ea },
+  },
+};
+
 export const VENUE_INFO: Record<Venue, { ko: string; ja: string; sign: string; npc: { ko: string; ja: string } }> = {
   izakaya: { ko: "이자카야", ja: "居酒屋", sign: "souka 酒場", npc: { ko: "대장", ja: "大将" } },
   pocha: { ko: "포차", ja: "ポチャ", sign: "souka 포차", npc: { ko: "이모", ja: "おばちゃん" } },

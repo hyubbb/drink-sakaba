@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import {
-  CHEER_WINDOW_MS, COLORS, COUNTER_FRONT_Z, FULL, VENUE_DISHES, VENUE_INFO, MASTER_POUR_AFTER_S, MOVE_HZ, PLATE_REFILL_MS, ROOM,
-  SAY_COOLDOWN_MS, STATE_HEARTBEAT_MS, TABLES, TABLE_HALF, clampInt, type Dish, type Venue,
+  CHEER_WINDOW_MS, COLORS, COUNTER_FRONT_Z, VENUE_DISHES, VENUE_DRINK, VENUE_INFO, MASTER_POUR_AFTER_S, MOVE_HZ, PLATE_REFILL_MS, ROOM,
+  SAY_COOLDOWN_MS, STATE_HEARTBEAT_MS, TABLES, TABLE_HALF, clampInt, type Dish, type DrinkStyle, type Venue,
 } from "./constants";
 import { type Avatar, disposeChar, makeChar, playAnim, updateChar } from "./character";
 import { PHRASE_MAP, UI, type Lang } from "./i18n";
@@ -20,6 +20,8 @@ export type Snapshot = {
   seated: boolean;
   canSit: boolean;
   venue: Venue;
+  /** sips in a full glass here (for the cup gauge) */
+  full: number;
   /** standing in the doorway: React shows the venue picker */
   atDoor: boolean;
   targets: Target[];
@@ -72,6 +74,9 @@ export class Engine {
   private sound = sound;
   readonly venue: Venue;
   private dishes: Dish[];
+  private drinkStyle: DrinkStyle;
+  /** sips in a full glass at this venue */
+  private full: number;
   private raf = 0;
   private disposers: (() => void)[] = [];
 
@@ -100,7 +105,7 @@ export class Engine {
   private refillTimers: Record<string, ReturnType<typeof setTimeout> | null> = {};
   private lastDishSeen: Record<string, string> = {};
   private lastClink: Record<string, number> = {};
-  private bot = { active: false, glass: FULL, av: null as Avatar | null, label: null as HTMLDivElement | null, bubble: null as Bubble | null, next: 0, pourAt: 0, cheerAt: -1e9 };
+  private bot = { active: false, glass: 1, av: null as Avatar | null, label: null as HTMLDivElement | null, bubble: null as Bubble | null, next: 0, pourAt: 0, cheerAt: -1e9 };
 
   private stats = { drank: 0, poured: 0, got: 0 };
   private keys: Record<string, boolean> = {};
@@ -129,6 +134,8 @@ export class Engine {
   constructor(private mount: HTMLElement, private labels: HTMLElement, opts: { venue: Venue }) {
     this.venue = opts.venue;
     this.dishes = VENUE_DISHES[opts.venue];
+    this.drinkStyle = VENUE_DRINK[opts.venue];
+    this.full = this.drinkStyle.sips;
     this.myId = makeId();
     this.lang = store.get("sakaba.lang") === "ja" ? "ja" : "ko";
     this.sound.muted = store.get("sakaba.mute") === "1";
@@ -138,7 +145,7 @@ export class Engine {
     mount.appendChild(this.renderer.domElement);
     this.world = buildWorld(this.scene, this.venue);
 
-    this.master = this.venue === "izakaya" ? makeChar(this.scene, 0xf2e7cd, 0x2a2a3a, 0xf7f7f7) : makeChar(this.scene, 0x2c63b8, 0xb03a2e, 0xd23b2b);
+    this.master = this.venue === "izakaya" ? makeChar(this.scene, 0xf2e7cd, 0x2a2a3a, 0xf7f7f7, this.drinkStyle) : makeChar(this.scene, 0x2c63b8, 0xb03a2e, 0xd23b2b, this.drinkStyle);
     this.master.root.position.set(0.3, 0, -4.0);
     this.masterLabel = this.mkLabel(VENUE_INFO[this.venue].npc[this.lang], false);
     this.masterBubble = this.mkBubble();
@@ -178,7 +185,7 @@ export class Engine {
     store.set("sakaba.nick", this.me.nick);
     store.set("sakaba.lang", lang);
     this.sound.unlock();
-    this.myAv = makeChar(this.scene, this.me.col, 0x3b4a5e);
+    this.myAv = makeChar(this.scene, this.me.col, 0x3b4a5e, this.drinkStyle);
     this.myAv.root.position.set(this.me.x, 0, this.me.z);
     this.myLabel = this.mkLabel(`${lang === "ja" ? "🇯🇵" : "🇰🇷"} ${this.me.nick}`, true);
     this.myBubble = this.mkBubble();
@@ -206,12 +213,12 @@ export class Engine {
   pour() {
     if (!this.me.seat || now() < this.pourCooldown) return;
     const tgt = this.currentTargets(this.occupancy()).find((t) => t.id === this.selTarget);
-    if (!tgt || tgt.glass >= FULL) return;
+    if (!tgt || tgt.glass >= this.full) return;
     this.pourCooldown = now() + 1300;
     this.playMine("pour");
     this.sound.pour();
     this.stats.poured++;
-    if (tgt.id === "bot") setTimeout(() => { this.bot.glass = FULL; this.botSay("thx", 500); }, 600);
+    if (tgt.id === "bot") setTimeout(() => { this.bot.glass = this.full; this.botSay("thx", 500); }, 600);
     else this.sendEv({ id: this.myId, k: "pour", to: tgt.id });
     this.refresh(true);
   }
@@ -357,7 +364,7 @@ export class Engine {
   private onState(d: StatePayload) {
     const r = this.remotes.get(d.id);
     if (!r) return;
-    r.glass = clampInt(d.glass, 0, FULL);
+    r.glass = clampInt(d.glass, 0, this.full);
     const pl = d.pl && this.world.plates[d.pl.id] ? validPlate(d.pl, this.dishes) : null;
     r.pl = pl ? { id: d.pl!.id, ...pl } : null;
     if (r.pl) this.plateCache[r.pl.id] = validPlate(r.pl, this.dishes)!;
@@ -394,10 +401,10 @@ export class Engine {
 
   private createRemote(id: string, p: PresencePayload) {
     const pres = sanitizePresence(p);
-    const av = makeChar(this.scene, pres.col, 0x3b4a5e);
+    const av = makeChar(this.scene, pres.col, 0x3b4a5e, this.drinkStyle);
     av.root.position.set(0, 0, 4);
     // glass level of people at other tables is never sent to me; show them mid-glass
-    const r: Remote = { id, pres, glass: FULL - 1, pl: null, x: 0, z: 4, ry: Math.PI, hasPos: false, av, label: this.mkLabel("", false), bubble: this.mkBubble(), cheerAt: -1e9 };
+    const r: Remote = { id, pres, glass: Math.max(1, this.full - 1), pl: null, x: 0, z: 4, ry: Math.PI, hasPos: false, av, label: this.mkLabel("", false), bubble: this.mkBubble(), cheerAt: -1e9 };
     this.setRemoteLabel(r);
     this.remotes.set(id, r);
   }
@@ -489,8 +496,8 @@ export class Engine {
     this.refresh(true);
   }
   private receivePour(nick: string, fromSeat: string | null) {
-    if (!this.me.seat || this.me.glass >= FULL || !this.isOpposite(this.me.seat, fromSeat)) return;
-    this.me.glass = FULL;
+    if (!this.me.seat || this.me.glass >= this.full || !this.isOpposite(this.me.seat, fromSeat)) return;
+    this.me.glass = this.full;
     this.stats.got++;
     this.sendState();
     this.sound.pour();
@@ -587,8 +594,8 @@ export class Engine {
   private botJoin() {
     const b = this.bot;
     b.active = true;
-    b.glass = FULL;
-    b.av = makeChar(this.scene, 0x8a6a3a, 0x5a4636, 0x2b1b11);
+    b.glass = this.full;
+    b.av = makeChar(this.scene, 0x8a6a3a, 0x5a4636, 0x2b1b11, this.drinkStyle);
     b.av.seated = true;
     const s = this.world.seats[BOT_SEAT];
     b.av.root.position.set(s.x, 0, s.z);
@@ -620,9 +627,9 @@ export class Engine {
     if (!b.active || !b.av) return;
     if (b.pourAt && now() > b.pourAt) {
       b.pourAt = 0;
-      if (this.isOpposite(this.me.seat, BOT_SEAT) && this.me.glass < FULL) {
+      if (this.isOpposite(this.me.seat, BOT_SEAT) && this.me.glass < this.full) {
         playAnim(b.av, "pour");
-        setTimeout(() => { if (this.me.seat && this.me.glass < FULL) this.receivePour(this.T.botName, BOT_SEAT); }, 700);
+        setTimeout(() => { if (this.me.seat && this.me.glass < this.full) this.receivePour(this.T.botName, BOT_SEAT); }, 700);
       }
     }
     if (now() < b.next) return;
@@ -829,7 +836,7 @@ export class Engine {
           playAnim(this.master, "pour");
           this.showBubble(this.masterBubble, "one");
           setTimeout(() => {
-            if (this.me.seat && this.me.glass === 0) { this.me.glass = FULL; this.stats.got++; this.sendState(); this.sound.pour(); this.toast(this.T.masterPoured(VENUE_INFO[this.venue].npc[this.lang])); }
+            if (this.me.seat && this.me.glass === 0) { this.me.glass = this.full; this.stats.got++; this.sendState(); this.sound.pour(); this.toast(this.T.masterPoured(VENUE_INFO[this.venue].npc[this.lang])); }
           }, 800);
         }
       } else this.masterWait = 0;
@@ -939,10 +946,11 @@ export class Engine {
       seated,
       canSit: !seated && !!this.nearSeat,
       venue: this.venue,
+      full: this.full,
       atDoor: this.atDoor,
       targets: tg.map((x) => ({ id: x.id, nick: x.nick, glass: x.glass })),
       selTarget: this.selTarget,
-      canPour: !!cur && cur.glass < FULL && now() >= this.pourCooldown,
+      canPour: !!cur && cur.glass < this.full && now() >= this.pourCooldown,
       canDrink: this.me.glass > 0,
       dish: plate ? { name: this.dishes[plate.d][this.lang], left: plate.l } : null,
       hint,
