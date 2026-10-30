@@ -38,7 +38,7 @@ export function Hud({ snap, engine }: { snap: Snapshot; engine: Engine }) {
 
   return (
     <div className="hud">
-      {sheet && <PhraseSheet lang={snap.lang} onSay={(k) => engine.say(k)} />}
+      {sheet && <PhraseSheet lang={snap.lang} venue={snap.venue} onSay={(k) => engine.say(k)} />}
 
       {snap.seated && snap.targets.length > 0 && (
         <div className="targets">

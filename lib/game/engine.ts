@@ -4,7 +4,7 @@ import {
   SAY_COOLDOWN_MS, STATE_HEARTBEAT_MS, TABLES, TABLE_HALF, clampInt, type Dish, type DrinkStyle, type Venue,
 } from "./constants";
 import { type Avatar, disposeChar, makeChar, playAnim, updateChar } from "./character";
-import { PHRASE_MAP, UI, type Lang } from "./i18n";
+import { PHRASE_MAP, UI, WOBBLE_PHRASES, type Lang } from "./i18n";
 import { sound } from "./sound";
 import { buildWorld, type Seat, type World } from "./world";
 import type { EventPayload, MovePayload, NetRoom, NetStatus, PlateState, PresencePayload, StatePayload } from "../net/protocol";
@@ -44,6 +44,8 @@ type Remote = {
   x: number; z: number; ry: number; hasPos: boolean;
   av: Avatar; label: HTMLDivElement; bubble: Bubble;
   cheerAt: number;
+  drunk: number;
+  flushAt: number;
 };
 type Bubble = { el: HTMLDivElement; until: number };
 type PlateRuntime = { d: number; l: number; v: number };
@@ -62,6 +64,17 @@ const BOT_REPLY: Record<string, string[]> = {
   one: ["kanpai"], nomu: ["lol", "oneshot"], pourme: ["one"], oneshot: ["heol", "lol"], slow: ["thx"], thx: ["lol"],
   lol: ["lol"], really: ["agree"], dots: ["dots", "otsu"], yum: ["agree"], have: ["thx"], leave: ["bye"], bye: ["bye"],
   doing: ["thx"], canbe: ["thx"],
+  lasttrain: ["safe", "bye"], funtoday: ["funtoday"], safe: ["bye"],
+  toast: ["fortoday"], fortoday: ["kanpai"], empty: ["pourme", "thx"], illpour: ["thx"], sip: ["thx"],
+  drunk: ["redface", "slow", "lol"], tipsy: ["lol", "metoo"], fine: ["nomu", "lol"], redface: ["lol", "drunk"], sweet: ["metoo", "true"],
+  bitter: ["hard", "listening"], onemore: ["nomu", "illpour"], nohome: ["metoo", "lasttrain"],
+  goodmood: ["metoo", "kanpai"], down: ["listening", "easy"], justdrink: ["metoo", "one"], longday: ["otsu", "koseng"], besttime: ["true", "metoo"],
+  tomorrow: ["thx"], easy: ["thx"], forget: ["kanpai", "thx"],
+  capacity: ["strong", "weak"], often: ["first", "sometimes"], weekend: ["sleep", "goout"], fav: ["beer", "soju"],
+  strong: ["daebak"], weak: ["slow"], first: ["welcome"], sometimes: ["agree"], sleep: ["true"], goout: ["daebak"], beer: ["true"], soju: ["true"],
+  daebak: ["lol"], noway: ["really"], metoo: ["true"], true: ["lol"], listening: ["thx"],
+  monday: ["true", "metoo"], gohome: ["metoo"], overtime: ["koseng", "hard"], payday: ["true", "kanpai"],
+  imo: ["one"], soup: ["true"], taisho: ["one"], shimiru: ["true"],
 };
 
 /* ------------------------------------------------------------------ engine */
@@ -89,6 +102,9 @@ export class Engine {
     nick: "", col: COLORS[(Math.random() * COLORS.length) | 0],
     x: 0, z: 3.0, ry: Math.PI, seat: null as string | null, seatT: 0, glass: 0,
     pl: null as PlateState | null,
+    /** glasses' worth in me: +1 per glass emptied, -0.5 per bite, -1 per minute */
+    drunk: 0,
+    flushAt: -1e9,
   };
   private entered = false;
   private enteredAt = 0;
@@ -105,7 +121,7 @@ export class Engine {
   private refillTimers: Record<string, ReturnType<typeof setTimeout> | null> = {};
   private lastDishSeen: Record<string, string> = {};
   private lastClink: Record<string, number> = {};
-  private bot = { active: false, glass: 1, av: null as Avatar | null, label: null as HTMLDivElement | null, bubble: null as Bubble | null, next: 0, pourAt: 0, cheerAt: -1e9 };
+  private bot = { active: false, glass: 1, av: null as Avatar | null, label: null as HTMLDivElement | null, bubble: null as Bubble | null, next: 0, pourAt: 0, cheerAt: -1e9, drunk: 0, flushAt: -1e9 };
 
   private stats = { drank: 0, poured: 0, got: 0 };
   private keys: Record<string, boolean> = {};
@@ -226,7 +242,8 @@ export class Engine {
   drink() {
     if (!this.me.seat || this.me.glass <= 0 || this.myAv?.anim) return;
     this.me.glass--;
-    if (this.me.glass === 0) this.stats.drank++;
+    this.me.flushAt = now();
+    if (this.me.glass === 0) { this.stats.drank++; this.me.drunk = Math.min(6, this.me.drunk + 1); }
     this.playMine("drink");
     this.sendEv({ id: this.myId, k: "drink" });
     this.sendState();
@@ -242,6 +259,7 @@ export class Engine {
     if (st.l <= 0) return;
     const owner = this.plateOwner(pid, occ);
     if (owner === "me" || owner === "bot") this.takePiece(pid);
+    this.me.drunk = Math.max(0, this.me.drunk - 0.5); // food sobers you up a little
     this.sendEv({ id: this.myId, k: "eat", pl: pid, d: st.d }); // owner elsewhere applies it
     this.playMine("eat", st.d);
     setTimeout(() => this.sound.eat(), 300);
@@ -268,7 +286,8 @@ export class Engine {
     this.sayCooldown = now() + SAY_COOLDOWN_MS;
     this.sendEv({ id: this.myId, k: "say", p: k });
     this.showBubble(this.myBubble, k);
-    if (!this.myAv.anim) playAnim(this.myAv, "talk");
+    if (WOBBLE_PHRASES.has(k)) playAnim(this.myAv, "wobble");
+    else if (!this.myAv.anim) playAnim(this.myAv, "talk");
     this.sound.pop();
     if (k === "kanpai" && this.me.seat) this.cheer();
     this.botHear(k);
@@ -312,10 +331,12 @@ export class Engine {
     this.room?.setPresence({ v: PROTOCOL_VERSION, id: this.myId, nick: this.me.nick, lang: this.lang, col: this.me.col, seat: this.me.seat, seatT: this.me.seatT });
   }
   /** Glass and the plate I keep, to my table only. Meaningless while standing. */
+  private sentDrunk = 0;
   private sendState() {
     if (!this.room || !this.entered) return;
     this.lastHeartbeat = now();
-    if (this.me.seat) this.room.send("st", { id: this.myId, glass: this.me.glass, pl: this.me.pl }, "table");
+    this.sentDrunk = halfStep(this.me.drunk);
+    if (this.me.seat) this.room.send("st", { id: this.myId, glass: this.me.glass, pl: this.me.pl, rd: this.sentDrunk }, "table");
   }
   /** Where I stand, to the whole shop. Seated people need no position: the seat id says it. */
   private sendPosition() {
@@ -365,6 +386,7 @@ export class Engine {
     const r = this.remotes.get(d.id);
     if (!r) return;
     r.glass = clampInt(d.glass, 0, this.full);
+    if (d.rd !== undefined) r.drunk = Math.min(6, Math.max(0, Number(d.rd) || 0));
     const pl = d.pl && this.world.plates[d.pl.id] ? validPlate(d.pl, this.dishes) : null;
     r.pl = pl ? { id: d.pl!.id, ...pl } : null;
     if (r.pl) this.plateCache[r.pl.id] = validPlate(r.pl, this.dishes)!;
@@ -377,6 +399,7 @@ export class Engine {
     switch (e.k) {
       case "drink":
         playAnim(r.av, "drink");
+        r.flushAt = now();
         break;
       case "cheer":
         playAnim(r.av, "cheer");
@@ -394,7 +417,7 @@ export class Engine {
         if (this.world.plates[e.pl] && r.pres.seat && this.world.seats[r.pres.seat]?.plate === e.pl) this.takePiece(e.pl);
         break;
       case "say":
-        if (PHRASE_MAP[e.p]) { this.showBubble(r.bubble, e.p); if (!r.av.anim) playAnim(r.av, "talk"); }
+        if (PHRASE_MAP[e.p]) { this.showBubble(r.bubble, e.p); if (WOBBLE_PHRASES.has(e.p)) playAnim(r.av, "wobble"); else if (!r.av.anim) playAnim(r.av, "talk"); }
         break;
     }
   }
@@ -404,7 +427,7 @@ export class Engine {
     const av = makeChar(this.scene, pres.col, 0x3b4a5e, this.drinkStyle);
     av.root.position.set(0, 0, 4);
     // glass level of people at other tables is never sent to me; show them mid-glass
-    const r: Remote = { id, pres, glass: Math.max(1, this.full - 1), pl: null, x: 0, z: 4, ry: Math.PI, hasPos: false, av, label: this.mkLabel("", false), bubble: this.mkBubble(), cheerAt: -1e9 };
+    const r: Remote = { id, pres, glass: Math.max(1, this.full - 1), pl: null, x: 0, z: 4, ry: Math.PI, hasPos: false, av, label: this.mkLabel("", false), bubble: this.mkBubble(), cheerAt: -1e9, drunk: 0, flushAt: -1e9 };
     this.setRemoteLabel(r);
     this.remotes.set(id, r);
   }
@@ -615,7 +638,7 @@ export class Engine {
     b.av = null; b.label = null; b.bubble = null;
   }
   private botSay(k: string, delay = 700) {
-    setTimeout(() => { if (this.bot.active && this.bot.bubble && this.bot.av) { this.showBubble(this.bot.bubble, k); playAnim(this.bot.av, "talk"); } }, delay);
+    setTimeout(() => { if (this.bot.active && this.bot.bubble && this.bot.av) { this.showBubble(this.bot.bubble, k); playAnim(this.bot.av, WOBBLE_PHRASES.has(k) ? "wobble" : "talk"); } }, delay);
   }
   private botHear(k: string) {
     if (!this.bot.active || !this.isOpposite(this.me.seat, BOT_SEAT)) return;
@@ -637,12 +660,18 @@ export class Engine {
     const opp = this.isOpposite(this.me.seat, BOT_SEAT);
     if (opp && this.me.glass === 0 && !b.pourAt) { b.pourAt = now() + 1800; return; }
     const r = Math.random();
-    if (b.glass > 0 && r < 0.4) { playAnim(b.av, "drink"); b.glass--; if (opp) this.sound.gulp(); return; }
+    if (b.glass > 0 && r < 0.4) {
+      playAnim(b.av, "drink"); b.glass--; b.flushAt = now();
+      if (b.glass === 0) b.drunk = Math.min(6, b.drunk + 1);
+      if (opp) this.sound.gulp();
+      if (b.drunk >= 2 && Math.random() < 0.5) this.botSay(["drunk", "tipsy", "redface"][(Math.random() * 3) | 0], 1400);
+      return;
+    }
     if (b.glass === 0 && opp && r < 0.7) { this.botSay("pourme", 0); return; }
     if (r < 0.6) {
       const pid = this.world.seats[BOT_SEAT].plate;
       const st = this.plateState(pid, this.occupancy());
-      if (st.l > 0 && this.takePiece(pid)) { playAnim(b.av, "eat", this.dishes[st.d]); if (opp) this.sound.eat(); return; }
+      if (st.l > 0 && this.takePiece(pid)) { playAnim(b.av, "eat", this.dishes[st.d]); b.drunk = Math.max(0, b.drunk - 0.5); if (opp) this.sound.eat(); return; }
     }
     if (opp && r < 0.75) this.botSay(["dots", "yum", "tired", "week"][(Math.random() * 4) | 0], 0);
   }
@@ -841,6 +870,10 @@ export class Engine {
         }
       } else this.masterWait = 0;
     }
+    // sober up slowly; share my level with the table when it moves a half step
+    me.drunk = Math.max(0, me.drunk - dt / 60);
+    if (halfStep(me.drunk) !== this.sentDrunk) this.sendState();
+    av.redness = redness(me.drunk, me.flushAt, t);
     updateChar(av, dt);
     if (t - this.lastHeartbeat > STATE_HEARTBEAT_MS) { if (me.seat) this.sendState(); else this.sendPosition(); }
 
@@ -864,12 +897,15 @@ export class Engine {
         ra.root.rotation.y += dr * kk;
         ra.speed = Math.min(1.6, Math.hypot(ra.root.position.x - ox, ra.root.position.z - oz) / Math.max(dt, 1e-3) / 2.4);
       }
+      ra.redness = redness(r.drunk, r.flushAt, t);
       updateChar(ra, dt);
       this.placeDom(r.label, ra.root.position, 1.78);
       this.tickBubble(r.bubble, ra.root.position, 1.78, t);
     }
     if (this.bot.active && this.bot.av) {
       this.botTick();
+      this.bot.drunk = Math.max(0, this.bot.drunk - dt / 60);
+      this.bot.av.redness = redness(this.bot.drunk, this.bot.flushAt, t);
       updateChar(this.bot.av, dt);
       if (this.bot.label) this.placeDom(this.bot.label, this.bot.av.root.position, 1.78);
       if (this.bot.bubble) this.tickBubble(this.bot.bubble, this.bot.av.root.position, 1.78, t);
@@ -987,6 +1023,16 @@ function makeId() {
   }
 }
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const halfStep = (n: number) => Math.round(n * 2) / 2;
+/**
+ * Face colour: every sip flushes briefly (fades in ~4 s); the lasting flush starts after the
+ * second glass and is full at three glasses' worth. Food and time bring it back down.
+ */
+function redness(drunk: number, flushAt: number, t: number) {
+  const lasting = Math.min(1, Math.max(0, (drunk - 1) / 2));
+  const pulse = 0.45 * Math.max(0, 1 - (t - flushAt) / 4000);
+  return Math.max(lasting, pulse);
+}
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 function sanitizePresence(p: PresencePayload): PresencePayload {

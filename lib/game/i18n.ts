@@ -6,19 +6,64 @@ const batchim = (w: string) => {
   return c >= 0 && c <= 11171 ? c % 28 : 0;
 };
 
-export type PhraseCategory = { id: string; ko: string; ja: string; items: [key: string, ko: string, ja: string][] };
+/** A phrase: key, Korean, Japanese, and optionally the only venue it appears in. */
+export type Phrase = [key: string, ko: string, ja: string, venue?: "izakaya" | "pocha"];
+export type PhraseCategory = { id: string; ko: string; ja: string; items: Phrase[] };
 
 /** Fixed phrases only. Everyone sees a phrase in their own language, so translation is free. */
 export const PHRASES: PhraseCategory[] = [
-  { id: "greet", ko: "인사", ja: "あいさつ", items: [["hi", "안녕", "こんばんは"], ["sit", "앉아도 돼?", "座っていい？"], ["welcome", "어서 와", "いらっしゃい"], ["leave", "먼저 갈게", "先に帰るね"], ["bye", "또 봐", "またね"]] },
-  { id: "care", ko: "위로", ja: "ねぎらい", items: [["otsu", "수고했어", "お疲れ"], ["koseng", "고생했어", "大変だったね"], ["hard", "힘들었겠다", "しんどかったでしょ"], ["canbe", "그럴 수 있지", "そういうこともあるよ"], ["doing", "잘하고 있어", "よく頑張ってるよ"]] },
-  { id: "ask", ko: "질문", ja: "しつもん", items: [["week", "이번 주 어땠어?", "今週どうだった？"], ["today", "오늘 어땠어?", "今日どうだった？"], ["work", "내일 출근해?", "明日も仕事？"]] },
-  { id: "ans", ko: "대답", ja: "こたえ", items: [["good", "좋았어", "よかった"], ["bad", "나빴어", "最悪だった"], ["soso", "그냥저냥", "まあまあ"], ["happy", "행복했어", "幸せだった"], ["tired", "피곤해", "疲れた"]] },
-  { id: "why", ko: "원인", ja: "げんいん", items: [["co", "회사가 문제", "会社が悪い"], ["boss", "상사가 문제", "上司が悪い"], ["money", "돈이 문제", "お金がない"], ["love", "연애가 문제", "恋愛がうまくいかない"], ["self", "내가 문제", "自分が悪い"]] },
-  { id: "drink", ko: "술자리", ja: "のみ", items: [["one", "한잔해~", "一杯どう？"], ["nomu", "마셔라 마셔라", "飲め飲め～"], ["pourme", "술 따라줘", "注いで～"], ["kanpai", "짠!", "乾杯！"], ["oneshot", "원샷?", "一気いく？"], ["slow", "천천히 마셔", "ゆっくり飲んで"]] },
-  { id: "react", ko: "리액션", ja: "リアクション", items: [["thx", "고마워", "ありがとう"], ["lol", "ㅋㅋㅋ", "ｗｗｗ"], ["heol", "헐", "えっ"], ["really", "진짜?", "マジで？"], ["agree", "맞아맞아", "わかるわかる"], ["dots", "……", "……"]] },
-  { id: "food", ko: "안주", ja: "つまみ", items: [["yum", "이거 맛있다", "これうまい"], ["have", "하나 먹어", "ひとつどうぞ"]] },
+  { id: "greet", ko: "인사", ja: "あいさつ", items: [
+    ["hi", "안녕", "こんばんは"], ["sit", "앉아도 돼?", "座っていい？"], ["welcome", "어서 와", "いらっしゃい"],
+    ["leave", "먼저 갈게", "先に帰るね"], ["bye", "또 봐", "またね"],
+    ["lasttrain", "막차 시간이다", "終電だ"], ["funtoday", "오늘 즐거웠어", "今日は楽しかった"], ["safe", "조심히 들어가", "気をつけて帰ってね"],
+  ] },
+  { id: "drink", ko: "술자리", ja: "のみ", items: [
+    ["one", "한잔해~", "一杯どう？"], ["nomu", "마셔라 마셔라", "飲め飲め～"], ["pourme", "술 따라줘", "注いで～"],
+    ["kanpai", "짠!", "乾杯！"], ["oneshot", "원샷?", "一気いく？"], ["slow", "천천히 마셔", "ゆっくり飲んで"],
+    ["toast", "건배사 해줘", "乾杯の音頭とって"], ["fortoday", "오늘을 위하여!", "今日に乾杯！"], ["empty", "잔 비었네?", "グラス空いてるよ？"],
+    ["illpour", "내가 따를게", "注ぐよ"], ["sip", "꺾어 마셔도 돼", "ちびちびでいいよ"],
+  ] },
+  { id: "tipsy", ko: "취기", ja: "酔い", items: [
+    ["drunk", "아 취한다", "あー酔ってきた"], ["tipsy", "알딸딸하다", "ほろ酔い〜"], ["fine", "아직 멀쩡해", "まだ全然いける"],
+    ["redface", "얼굴 빨개졌어", "顔赤くなってきた"], ["sweet", "오늘 술이 달다", "今日は酒がうまい"], ["bitter", "오늘 술이 쓰다", "今日は酒が苦い"],
+    ["onemore", "딱 한 잔만 더", "あと一杯だけ"], ["nohome", "집에 가기 싫다", "帰りたくない"],
+  ] },
+  { id: "mood", ko: "기분", ja: "気分", items: [
+    ["goodmood", "오늘 기분 좋다", "今日は気分いい"], ["down", "좀 우울해", "ちょっと落ち込んでる"], ["justdrink", "그냥 마시고 싶었어", "ただ飲みたかった"],
+    ["longday", "오늘 너무 길었다", "長い一日だった"], ["besttime", "이 시간이 제일 좋아", "この時間が一番好き"],
+  ] },
+  { id: "care", ko: "위로", ja: "ねぎらい", items: [
+    ["otsu", "수고했어", "お疲れ"], ["koseng", "고생했어", "大変だったね"], ["hard", "힘들었겠다", "しんどかったでしょ"],
+    ["canbe", "그럴 수 있지", "そういうこともあるよ"], ["doing", "잘하고 있어", "よく頑張ってるよ"],
+    ["tomorrow", "내일은 괜찮을 거야", "明日はきっと大丈夫"], ["easy", "너무 애쓰지 마", "頑張りすぎないでね"], ["forget", "오늘은 잊어버려", "今日は忘れよ"],
+  ] },
+  { id: "ask", ko: "질문", ja: "しつもん", items: [
+    ["week", "이번 주 어땠어?", "今週どうだった？"], ["today", "오늘 어땠어?", "今日どうだった？"], ["work", "내일 출근해?", "明日も仕事？"],
+    ["capacity", "주량이 어떻게 돼?", "お酒強い？"], ["often", "여기 자주 와?", "よく来るの？"], ["weekend", "주말에 뭐 해?", "週末何するの？"],
+    ["fav", "무슨 술 좋아해?", "何のお酒が好き？"],
+  ] },
+  { id: "ans", ko: "대답", ja: "こたえ", items: [
+    ["good", "좋았어", "よかった"], ["bad", "나빴어", "最悪だった"], ["soso", "그냥저냥", "まあまあ"], ["happy", "행복했어", "幸せだった"], ["tired", "피곤해", "疲れた"],
+    ["strong", "잘 마셔", "強いよ"], ["weak", "약해", "弱い"], ["first", "처음이야", "初めて"], ["sometimes", "가끔 와", "たまに"],
+    ["sleep", "잠만 잘 거야", "ひたすら寝る"], ["goout", "놀러 가", "遊びに行く"], ["beer", "맥주", "ビール"], ["soju", "소주", "焼酎"],
+  ] },
+  { id: "react", ko: "리액션", ja: "リアクション", items: [
+    ["thx", "고마워", "ありがとう"], ["lol", "ㅋㅋㅋ", "ｗｗｗ"], ["heol", "헐", "えっ"], ["really", "진짜?", "マジで？"], ["agree", "맞아맞아", "わかるわかる"],
+    ["dots", "……", "……"], ["daebak", "대박", "やば"], ["noway", "에이 설마", "まさか〜"], ["metoo", "나도 그래", "私も"], ["true", "인정", "それな"], ["listening", "듣고 있어", "聞いてるよ"],
+  ] },
+  { id: "job", ko: "직장", ja: "仕事", items: [
+    ["co", "회사가 문제", "会社が悪い"], ["boss", "상사가 문제", "上司が悪い"], ["money", "돈이 문제", "お金がない"], ["love", "연애가 문제", "恋愛がうまくいかない"], ["self", "내가 문제", "自分が悪い"],
+    ["monday", "월요일 싫다", "月曜やだ"], ["gohome", "퇴근하고 싶다", "早く帰りたい"], ["overtime", "야근했어", "残業だった"], ["payday", "월급날까지 버티자", "給料日まで耐えよう"],
+  ] },
+  { id: "food", ko: "안주·가게", ja: "つまみ・店", items: [
+    ["yum", "이거 맛있다", "これうまい"], ["have", "하나 먹어", "ひとつどうぞ"],
+    ["imo", "이모, 여기 한 병 더요!", "おばちゃん、もう一本！", "pocha"], ["soup", "국물이 끝내준다", "スープが最高", "pocha"],
+    ["taisho", "대장, 한 잔 더요!", "大将、おかわり！", "izakaya"], ["shimiru", "속이 풀린다", "染みるね〜", "izakaya"],
+  ] },
 ];
+
+/** Phrases that make the speaker sway a little. */
+export const WOBBLE_PHRASES = new Set(["drunk", "tipsy", "redface", "nohome", "onemore"]);
 
 export const PHRASE_MAP: Record<string, { ko: string; ja: string }> = {};
 PHRASES.forEach((c) => c.items.forEach(([k, ko, ja]) => (PHRASE_MAP[k] = { ko, ja })));

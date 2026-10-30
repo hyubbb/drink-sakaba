@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { VENUE_DRINK, type Dish, type DrinkStyle } from "./constants";
 import { basic, box, cyl, lam } from "./mesh";
 
-export type AnimKind = "drink" | "pour" | "eat" | "cheer" | "talk";
+export type AnimKind = "drink" | "pour" | "eat" | "cheer" | "talk" | "wobble";
 
 export type Avatar = {
   root: THREE.Group;
@@ -19,13 +19,21 @@ export type Avatar = {
   bite: { stick: THREE.Mesh; meat: THREE.Mesh[]; chop: THREE.Mesh[]; piece: THREE.Mesh; mat: THREE.MeshLambertMaterial };
   anim: { k: AnimKind; t0: number; dur: number } | null;
   walkPh: number;
+  /** how flushed the face should be, 0 (normal) … 1 (bright red); set by the engine */
+  redness: number;
+  redShown: number;
+  face: THREE.MeshLambertMaterial;
+  blush: THREE.Mesh[];
+  blushMat: THREE.MeshBasicMaterial;
   speed: number;
   seated: boolean;
 };
 
 const skinMat = lam(0xfaf3e6);
 const blackMat = basic(0x141414);
-const blushMat = basic(0xf09aa4);
+const baseBlush = basic(0xf09aa4);
+const SKIN = new THREE.Color(0xfaf3e6), FLUSH = new THREE.Color(0xf07a68);
+const BLUSH = new THREE.Color(0xf09aa4), BLUSH_HOT = new THREE.Color(0xe0484a);
 
 /** souka-style mascot: round head, dot eyes, blush, hachimaki headband in the player's colour. */
 /**
@@ -45,7 +53,10 @@ export function makeChar(parent: THREE.Object3D, col: number, bodyCol: number, b
   const headG = new THREE.Group();
   headG.position.y = 0.88;
   hip.add(headG);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 8), skinMat);
+  const face = skinMat.clone(); // own material so the face can flush
+  const blushMat = baseBlush.clone();
+  const blush: THREE.Mesh[] = [];
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 8), face);
   head.scale.set(1.08, 0.95, 1);
   headG.add(head);
   for (const s of [-1, 1]) {
@@ -54,6 +65,7 @@ export function makeChar(parent: THREE.Object3D, col: number, bodyCol: number, b
     e.scale.z = 0.5;
     headG.add(e);
     const b = new THREE.Mesh(new THREE.CircleGeometry(0.06, 8), blushMat);
+    blush.push(b);
     b.position.set(0.25 * s, -0.08, 0.305);
     b.rotation.y = 0.6 * s;
     headG.add(b);
@@ -124,6 +136,7 @@ export function makeChar(parent: THREE.Object3D, col: number, bodyCol: number, b
     root, hip, headG, armL: arms[0], armR, armRParts: parts[1], legL: legs[0], legR: legs[1],
     handGlass, handBottle, handBite, bite: { stick, meat, chop, piece, mat: biteMat },
     anim: null, walkPh: 0, speed: 0, seated: false,
+    redness: 0, redShown: 0, face, blush, blushMat,
   };
 }
 
@@ -135,7 +148,7 @@ export function disposeChar(av: Avatar) {
   });
 }
 
-const DUR: Record<AnimKind, number> = { drink: 1.0, pour: 1.3, eat: 0.9, cheer: 1.3, talk: 0.6 };
+const DUR: Record<AnimKind, number> = { drink: 1.0, pour: 1.3, eat: 0.9, cheer: 1.3, talk: 0.6, wobble: 1.8 };
 
 export function playAnim(av: Avatar, k: AnimKind, dish?: Dish) {
   if (k === "eat" && dish) {
@@ -214,6 +227,12 @@ export function updateChar(av: Avatar, dt: number) {
     aR = -0.5 - 0.9 * hold;
     av.handBottle.rotation.x = 1.6 * hold;
     hx = 0.1 * hold;
+  } else if (k === "wobble") {
+    // tipsy sway: whole upper body rocks side to side, head lags behind
+    const sw = Math.sin(p * Math.PI * 4) * Math.sin(Math.PI * p);
+    av.hip.rotation.z = sw * 0.22;
+    hz = -sw * 0.25;
+    hx = 0.08 * Math.sin(Math.PI * p);
   } else if (k === "talk") {
     hz = Math.sin(p * Math.PI * 4) * 0.12;
   }
@@ -235,5 +254,19 @@ export function updateChar(av: Avatar, dt: number) {
   }
   av.armL.rotation.x = aL;
   av.headG.rotation.x = hx;
+  if (k !== "wobble") {
+    // very flushed people keep swaying gently on their own
+    const idle = av.redShown > 0.8 ? Math.sin(performance.now() * 0.0021) * 0.05 * (av.redShown - 0.8) * 5 : 0;
+    av.hip.rotation.z = idle;
+    hz += -idle * 0.8;
+  }
   av.headG.rotation.z = hz;
+
+  // face colour eases toward the target redness
+  av.redShown += (av.redness - av.redShown) * Math.min(1, dt * 2.5);
+  const r = av.redShown;
+  av.face.color.copy(SKIN).lerp(FLUSH, r * 0.85);
+  av.blushMat.color.copy(BLUSH).lerp(BLUSH_HOT, r);
+  const bs = 1 + r * 0.9;
+  av.blush.forEach((b) => b.scale.set(bs, bs, 1));
 }

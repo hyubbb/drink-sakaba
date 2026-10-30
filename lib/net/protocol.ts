@@ -34,7 +34,8 @@ export type PlateState = { id: string; d: number; l: number; v: number };
 
 export type MovePayload = { id: string; x: number; z: number; ry: number };
 
-export type StatePayload = { id: string; glass: number; pl: PlateState | null };
+/** rd: how many glasses' worth the sender has in them (0 … 6, halves allowed); drives face colour */
+export type StatePayload = { id: string; glass: number; pl: PlateState | null; rd?: number };
 
 export type EventPayload =
   | { id: string; k: "drink" }
