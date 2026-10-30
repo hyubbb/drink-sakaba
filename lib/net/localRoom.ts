@@ -1,26 +1,29 @@
-import { PROTOCOL_VERSION, type NetRoom, type NetStatus, type PayloadOf, type PresencePayload, type Topic } from "./protocol";
+import { PROTOCOL_VERSION, type NetRoom, type NetStatus, type PayloadOf, type PresencePayload, type Scope, type Topic } from "./protocol";
 
 /**
  * Same-browser stand-in for Supabase, built on BroadcastChannel.
  * Open two tabs with NEXT_PUBLIC_SAKABA_NET=local to test multiplayer without any backend.
+ * Table scoping is emulated: a table message reaches only tabs seated at that table.
  */
 type Msg =
   | { t: "pres"; p: PresencePayload }
   | { t: "bye"; id: string }
   | { t: "hello"; id: string }
-  | { t: "bc"; topic: Topic; d: { id: string } };
+  | { t: "bc"; topic: Topic; scope: string; d: { id: string } };
 
 export class LocalRoom implements NetRoom {
-  readonly shop = 1;
-  private bc = new BroadcastChannel("sakaba-local");
+  private bc: BroadcastChannel;
   private peers = new Map<string, { p: PresencePayload; seen: number }>();
   private known = new Set<string>();
   private mine: PresencePayload | null = null;
+  private table: string | null = null;
   private peerFns = new Set<(p: Map<string, PresencePayload>, j: string[], l: string[]) => void>();
+  private tableReadyFns = new Set<(t: string) => void>();
   private topicFns: Record<Topic, Set<(d: unknown) => void>> = { mv: new Set(), st: new Set(), ev: new Set() };
   private timer: ReturnType<typeof setInterval>;
 
-  constructor(readonly myId: string) {
+  constructor(readonly myId: string, venue: string, readonly shop: number) {
+    this.bc = new BroadcastChannel(`sakaba-local:${venue}:ch-${shop}`);
     this.bc.onmessage = (e: MessageEvent<Msg>) => this.onMsg(e.data);
     this.post({ t: "hello", id: myId });
     this.timer = setInterval(() => {
@@ -46,7 +49,14 @@ export class LocalRoom implements NetRoom {
       if (!prev || JSON.stringify(prev.p) !== JSON.stringify(m.p)) this.emit();
       return;
     }
-    if (m.t === "bc" && m.d?.id !== this.myId) this.topicFns[m.topic]?.forEach((fn) => fn(m.d));
+    if (m.t === "bc" && m.d?.id !== this.myId) {
+      if (m.scope !== "shop" && m.scope !== `table:${this.table}`) return;
+      // dev counter: messages this tab received, by topic and scope (inspect window.__sakabaRx)
+      const w = window as unknown as { __sakabaRx?: Record<string, number> };
+      const key = `${m.topic}@${m.scope === "shop" ? "shop" : "table"}`;
+      (w.__sakabaRx ??= {})[key] = (w.__sakabaRx[key] ?? 0) + 1;
+      this.topicFns[m.topic]?.forEach((fn) => fn(m.d));
+    }
   }
 
   private emit() {
@@ -60,8 +70,17 @@ export class LocalRoom implements NetRoom {
   status(): NetStatus { return "live"; }
   onStatus() { return () => {}; }
   onPeers(fn: (p: Map<string, PresencePayload>, j: string[], l: string[]) => void) { this.peerFns.add(fn); return () => void this.peerFns.delete(fn); }
+  onTableReady(fn: (t: string) => void) { this.tableReadyFns.add(fn); return () => void this.tableReadyFns.delete(fn); }
   setPresence(p: PresencePayload) { this.mine = p; this.post({ t: "pres", p }); }
-  send<T extends Topic>(topic: T, data: PayloadOf<T>) { this.post({ t: "bc", topic, d: data }); }
+  joinTable(tableId: string | null) {
+    if (this.table === tableId) return;
+    this.table = tableId;
+    if (tableId) setTimeout(() => { if (this.table === tableId) this.tableReadyFns.forEach((fn) => fn(tableId)); }, 50);
+  }
+  send<T extends Topic>(topic: T, data: PayloadOf<T>, scope: Scope) {
+    if (scope === "table" && !this.table) return;
+    this.post({ t: "bc", topic, scope: scope === "table" ? `table:${this.table}` : "shop", d: data });
+  }
   on<T extends Topic>(topic: T, fn: (d: PayloadOf<T>) => void) {
     const f = fn as (d: unknown) => void;
     this.topicFns[topic].add(f);

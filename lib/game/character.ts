@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { DISHES, clampInt } from "./constants";
+import type { Dish } from "./constants";
 import { basic, box, cyl, lam } from "./mesh";
 
 export type AnimKind = "drink" | "pour" | "eat" | "cheer" | "talk";
@@ -125,10 +125,10 @@ export function disposeChar(av: Avatar) {
 
 const DUR: Record<AnimKind, number> = { drink: 1.0, pour: 1.3, eat: 0.9, cheer: 1.3, talk: 0.6 };
 
-export function playAnim(av: Avatar, k: AnimKind, dish?: number) {
-  if (k === "eat") {
-    const D = DISHES[clampInt(dish ?? 0, 0, DISHES.length - 1)];
-    const skewer = D.key === "yakitori";
+export function playAnim(av: Avatar, k: AnimKind, dish?: Dish) {
+  if (k === "eat" && dish) {
+    const D = dish;
+    const skewer = !!D.skewer;
     av.bite.stick.visible = skewer;
     av.bite.meat.forEach((m) => (m.visible = skewer));
     av.bite.chop.forEach((c) => (c.visible = !skewer));

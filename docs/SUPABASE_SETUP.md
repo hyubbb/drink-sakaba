@@ -6,20 +6,25 @@ app needs from Supabase and Vercel. Do the steps in order and report the results
 
 ## What the app uses
 
-- **Supabase Realtime only.** Broadcast + Presence on channels named `sakaba:shop-1` … `sakaba:shop-9`.
+- **Supabase Realtime only.** Broadcast + Presence on two levels of channels:
+  - venue channels `sakaba:<venue>:ch-<n>` — venue is `izakaya` or `pocha`, n is 1–5 (10 channels in total)
+  - table channels `sakaba:<venue>:ch-<n>:t1` / `:t2` — only the people seated at that table
 - **No database tables, no Storage, no Edge Functions** in phase 1. Nothing is persisted.
 - Phase 2 (optional, anti-abuse): **Anonymous Sign-ins** + **private channels** with RLS policies on `realtime.messages`.
 
 Traffic design (already implemented in `lib/net/`):
 
-| Kind | Used for | When it is sent |
-| --- | --- | --- |
-| Presence | nickname, language, colour, seat, seat timestamp | enter, sit, stand, language change |
-| Broadcast `mv` | position while walking | 5 times per second, only while moving |
-| Broadcast `st` | glass level, shared plate state, resting position | on change, when someone joins, every 20 s |
-| Broadcast `ev` | drink, pour, eat, cheer, phrase | once per action |
+| Kind | Channel | Used for | When it is sent |
+| --- | --- | --- | --- |
+| Presence | venue | nickname, language, colour, seat, seat timestamp | enter, sit, stand, language change |
+| Broadcast `mv` | venue | position of people standing | 5 times per second while walking, once on stop, once (spread over ~2.5 s) when someone joins |
+| Broadcast `ev` (say) | venue | phrases said while standing | once per phrase |
+| Broadcast `st` | table | glass level, shared plate state | on change, when someone sits at the table (spread over ~1.5 s), every 20 s |
+| Broadcast `ev` | table | drink, pour, eat, cheer, phrase | once per action |
 
-A shop holds 16 people (`SHOP_CAPACITY` in `lib/game/constants.ts`). When `shop-N` is full the client joins `shop-N+1`.
+A channel holds 16 people (`CHANNEL_CAPACITY` in `lib/game/constants.ts`). Players can pick a channel in the
+top-left sign; otherwise the client takes the first of ch-1 … ch-5 with room. Moving between izakaya and pocha
+leaves one venue channel and joins the other.
 
 ---
 
@@ -68,10 +73,11 @@ Do **not** copy the `service_role` / secret key anywhere in this project. The ap
 ### 5. Verify
 
 1. Open the deployed URL in two different browsers (or one normal + one private window).
-2. Enter with two nicknames. The sign at the top left must show **"1호점 · 손님 2명"** in both. If it says "혼자 모드", the env vars are missing or wrong.
+2. Enter with two nicknames. The sign at the top left must show **"1채널 · 손님 2명"** in both. If it says "혼자 모드", the env vars are missing or wrong.
 3. Sit across from each other at the same table (side a ↔ side b). Pour from one; the other's glass must fill and a toast must appear.
-4. Dashboard → **Realtime → Inspector**: join channel `sakaba:shop-1` and confirm `mv` / `st` / `ev` broadcast messages and presence entries appear.
-5. Optional: Dashboard → **Reports / Usage → Realtime** to watch peak connections and messages.
+4. Dashboard → **Realtime → Inspector**: join channel `sakaba:izakaya:ch-1` and confirm presence entries and `mv` messages appear; join `sakaba:izakaya:ch-1:t1` while two people sit at table 1 and confirm `st` / `ev` messages appear.
+5. Switch one browser to 포차 with the button in the sign: the other browser's count must drop to 1.
+6. Optional: Dashboard → **Reports / Usage → Realtime** to watch peak connections and messages.
 
 ---
 
@@ -92,23 +98,23 @@ Run in **SQL Editor**. Anonymous users have the `authenticated` role, so `to aut
 RLS is already enabled on `realtime.messages`; do **not** run `alter table ... enable row level security` (it fails with 42501).
 
 ```sql
--- Receive broadcast and presence on sakaba shop channels
-create policy "sakaba: read shop channels"
+-- Receive broadcast and presence on sakaba venue and table channels
+create policy "sakaba: read channels"
 on realtime.messages
 for select
 to authenticated
 using (
-  (select realtime.topic()) like 'sakaba:shop-%'
+  (select realtime.topic()) like 'sakaba:%'
   and realtime.messages.extension in ('broadcast', 'presence')
 );
 
--- Send broadcast and track presence on sakaba shop channels
-create policy "sakaba: write shop channels"
+-- Send broadcast and track presence on sakaba venue and table channels
+create policy "sakaba: write channels"
 on realtime.messages
 for insert
 to authenticated
 with check (
-  (select realtime.topic()) like 'sakaba:shop-%'
+  (select realtime.topic()) like 'sakaba:%'
   and realtime.messages.extension in ('broadcast', 'presence')
 );
 ```
@@ -142,18 +148,20 @@ Free plan Realtime limits (project-wide), from Supabase docs:
 | Presence messages per second | 20 | 50 |
 | Channel joins per second | 100 | 500 |
 
-A message delivered to N clients counts as N messages. Rough load for one full shop (12 seated):
-about 30 messages/s while drinking and talking, plus about 50–60/s for each person walking around.
-The Free plan therefore suits one busy shop; plan for Pro before several shops are open at once.
+A message delivered to N clients likely counts as N messages. Table actions reach at most 5 other
+people (the rest of the table), so seated play costs roughly 1.5–2 messages/s per person.
+Rough totals: one full channel (16 people, mostly seated) ≈ 30 messages/s, plus about 75/s for each
+person walking at that moment. 100 people spread over the channels ≈ 150–200 messages/s.
+The Free plan suits testing and one or two busy channels; plan for Pro before traffic grows beyond that.
 Exceeding the per-second limit disconnects clients briefly; supabase-js reconnects on its own.
 
-Knobs in `lib/game/constants.ts` if usage runs high: `MOVE_HZ` (walking updates), `STATE_HEARTBEAT_MS`, `SHOP_CAPACITY`.
+Knobs in `lib/game/constants.ts` if usage runs high: `MOVE_HZ` (walking updates), `STATE_HEARTBEAT_MS`, `CHANNEL_CAPACITY`, `CHANNEL_COUNT`.
 
 ## Never do
 
 - Never expose the `service_role` / secret key (no `NEXT_PUBLIC_` variable, no client code).
 - Never add database tables or Postgres Changes for this feature; the protocol is designed to be stateless.
-- Never rename the channel prefix `sakaba:shop-` without updating both the RLS policies and `lib/net/supabaseRoom.ts`.
+- Never rename the channel prefix `sakaba:` without updating both the RLS policies and `lib/net/supabaseRoom.ts`.
 
 ## Hand back
 
@@ -162,5 +170,5 @@ Report to the app owner:
 1. Project ref and region.
 2. That the three Vercel env vars are set (do not paste the key values into chat).
 3. The deployed URL.
-4. Result of the two-browser verification (shop sign text, pour worked or not).
+4. Result of the two-browser verification (sign text, pour worked or not, venue switch worked or not).
 5. Whether phase 2 was done.

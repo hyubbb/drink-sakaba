@@ -1,5 +1,11 @@
 export type Lang = "ko" | "ja";
 
+/** Does the last Hangul syllable have a final consonant (받침)? Picks 이/가, 으로/로. */
+const batchim = (w: string) => {
+  const c = w.charCodeAt(w.length - 1) - 0xac00;
+  return c >= 0 && c <= 11171 ? c % 28 : 0;
+};
+
 export type PhraseCategory = { id: string; ko: string; ja: string; items: [key: string, ko: string, ja: string][] };
 
 /** Fixed phrases only. Everyone sees a phrase in their own language, so translation is free. */
@@ -23,28 +29,34 @@ export const UI = {
     to: "따라 줄 사람", hintWalk: "걸어서 빈자리로 가 보세요", hintNear: "앉을 수 있는 자리예요",
     hintSeatNobody: "맞은편이 비어 있어요. 누가 앉으면 따라 줄 수 있어요",
     hintEmpty: "잔이 비었어요. 앞사람이 따라 줘야 마실 수 있어요",
-    taken: "다른 분이 먼저 앉았어요", poured: (n: string) => `${n} 님이 한 잔 따라 줬어요`, master: "대장이 한 잔 따라 줬어요",
-    refill: (d: string) => `${d} 나왔어요`, live: (n: number, s: number) => `${s}호점 · 손님 ${n}명`,
+    taken: "다른 분이 먼저 앉았어요", poured: (n: string) => `${n} 님이 한 잔 따라 줬어요`, masterPoured: (npc: string) => `${npc}${batchim(npc) ? "이" : "가"} 한 잔 따라 줬어요`,
+    refill: (d: string) => `${d} 나왔어요`, live: (n: number, ch: number) => `${ch}채널 · 손님 ${n}명`,
     solo: "혼자 모드 · 연습 손님과 함께", connecting: "연결 중", offline: "연결이 끊겼어요 · 다시 연결 중",
     stats: (a: number, b: number, c: number) => `마신 잔 ${a} · 따라준 잔 ${b} · 받은 잔 ${c}`,
     kanpai: "짠!", botName: "쿠마(연습)", soloToast: "지금은 혼자예요. 연습 손님 쿠마가 앉아 있어요",
     gateTitle: "모르는 사람과 마주 앉아 한 잔씩 따라 주는 온라인 혼술집.", nick: "닉네임", nickPh: "예: 퇴근한 곰",
     enter: "노렌을 걷고 들어가기", keys: "이동 WASD·방향키 · 앉기/일어나기 E · 따르기 1 · 마시기 2 · 안주 3 · 짠 4 · 말하기 T · 드래그로 시점 회전",
     guest: "손님",
+    channel: (n: number) => `${n}채널`, channelAuto: "채널", switchTo: (v: string) => `${v}${batchim(v) && batchim(v) !== 8 ? "으로" : "로"} 가기`,
+    doorTitle: "어디서 마실까요?", doorStay: "더 있을래요", doorHere: "지금 여기",
+    venueDesc: { izakaya: "노렌 아래 맥주 한 잔, 꼬치와 가라아게", pocha: "주황 천막 아래 소주 한 잔, 떡볶이와 어묵" },
   },
   ja: {
     sit: "座る", stand: "立つ", pour: "注ぐ", drink: "飲む", eat: "つまむ", cheer: "乾杯", talk: "話す",
     to: "注ぐ相手", hintWalk: "歩いて空いている席へ", hintNear: "座れる席です",
     hintSeatNobody: "向かいは空席です。誰か座ったら注げます",
     hintEmpty: "グラスが空です。向かいの人に注いでもらおう",
-    taken: "先に座った人がいます", poured: (n: string) => `${n}さんが一杯注いでくれた`, master: "大将が一杯注いでくれた",
-    refill: (d: string) => `${d}が来た`, live: (n: number, s: number) => `${s}号店・客 ${n}人`,
+    taken: "先に座った人がいます", poured: (n: string) => `${n}さんが一杯注いでくれた`, masterPoured: (npc: string) => `${npc}が一杯注いでくれた`,
+    refill: (d: string) => `${d}が来た`, live: (n: number, ch: number) => `${ch}ch・客 ${n}人`,
     solo: "ひとりモード・練習客といっしょ", connecting: "接続中", offline: "接続が切れました・再接続中",
     stats: (a: number, b: number, c: number) => `飲んだ ${a}・注いだ ${b}・注がれた ${c}`,
     kanpai: "乾杯！", botName: "クマ(練習)", soloToast: "今はひとりです。練習客のクマが座っています",
     gateTitle: "知らない誰かと向かい合って、一杯ずつ注ぎあう店。", nick: "ニックネーム", nickPh: "例：帰宅したクマ",
     enter: "のれんをくぐる", keys: "移動 WASD・矢印 · 座る/立つ E · 注ぐ 1 · 飲む 2 · つまむ 3 · 乾杯 4 · 話す T · ドラッグで視点回転",
     guest: "名無し",
+    channel: (n: number) => `${n}ch`, channelAuto: "ch", switchTo: (v: string) => `${v}へ`,
+    doorTitle: "どこで飲む？", doorStay: "もう少しいる", doorHere: "今ここ",
+    venueDesc: { izakaya: "のれんの下でビール、焼き鳥と唐揚げ", pocha: "オレンジのテントで焼酎、トッポッキとおでん" },
   },
 };
 export type UIText = (typeof UI)["ko"];

@@ -1,35 +1,43 @@
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
-import { MAX_SHOPS, SHOP_CAPACITY } from "../game/constants";
-import { PROTOCOL_VERSION, type NetRoom, type NetStatus, type PayloadOf, type PresencePayload, type Topic } from "./protocol";
+import { CHANNEL_CAPACITY, CHANNEL_COUNT, type Venue } from "../game/constants";
+import { PROTOCOL_VERSION, type NetRoom, type NetStatus, type PayloadOf, type PresencePayload, type Scope, type Topic } from "./protocol";
 
-const TOPICS: Topic[] = ["mv", "st", "ev"];
-export const channelName = (shop: number) => `sakaba:shop-${shop}`;
+const SHOP_TOPICS: Topic[] = ["mv", "ev"];
+const TABLE_TOPICS: Topic[] = ["st", "ev"];
+export const shopChannelName = (venue: Venue, ch: number) => `sakaba:${venue}:ch-${ch}`;
+export const tableChannelName = (venue: Venue, ch: number, table: string) => `${shopChannelName(venue, ch)}:${table}`;
 
 class SupabaseRoom implements NetRoom {
   private st: NetStatus = "connecting";
   private statusFns = new Set<(s: NetStatus) => void>();
   private peerFns = new Set<(p: Map<string, PresencePayload>, j: string[], l: string[]) => void>();
+  private tableReadyFns = new Set<(t: string) => void>();
   private topicFns: Record<Topic, Set<(d: unknown) => void>> = { mv: new Set(), st: new Set(), ev: new Set() };
   private known = new Set<string>();
   private lastPresence = "";
   private pendingPresence: PresencePayload | null = null;
   readonly channel: RealtimeChannel;
+  private table: { id: string; ch: RealtimeChannel; live: boolean } | null = null;
 
-  constructor(private client: SupabaseClient, readonly myId: string, readonly shop: number, isPrivate: boolean) {
-    this.channel = client.channel(channelName(shop), {
+  constructor(private client: SupabaseClient, readonly myId: string, private venue: Venue, readonly shop: number, private isPrivate: boolean) {
+    this.channel = client.channel(shopChannelName(venue, shop), {
       config: { broadcast: { self: false, ack: false }, presence: { key: myId }, private: isPrivate },
     });
-    for (const t of TOPICS) {
-      this.channel.on("broadcast", { event: t }, (msg) => {
+    this.listen(this.channel, SHOP_TOPICS);
+    this.channel.on("presence", { event: "sync" }, () => this.emitPeers());
+  }
+
+  private listen(ch: RealtimeChannel, topics: Topic[]) {
+    for (const t of topics) {
+      ch.on("broadcast", { event: t }, (msg) => {
         const d = msg.payload as { id?: unknown } | undefined;
         if (!d || typeof d.id !== "string" || d.id === this.myId) return;
         this.topicFns[t].forEach((fn) => fn(d));
       });
     }
-    this.channel.on("presence", { event: "sync" }, () => this.emitPeers());
   }
 
-  /** Subscribe and resolve once joined (or reject on failure). */
+  /** Subscribe to the shop channel and resolve once joined (or reject on failure). */
   join(timeoutMs = 8000) {
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("realtime join timed out")), timeoutMs);
@@ -50,7 +58,7 @@ class SupabaseRoom implements NetRoom {
     });
   }
 
-  /** Distinct people currently in the channel (waits briefly for the first presence sync). */
+  /** Distinct people currently in the shop (waits briefly for the first presence sync). */
   async headcount(waitMs = 1200) {
     await new Promise((r) => setTimeout(r, waitMs));
     return Object.keys(this.channel.presenceState()).length;
@@ -87,15 +95,42 @@ class SupabaseRoom implements NetRoom {
   status() { return this.st; }
   onStatus(fn: (s: NetStatus) => void) { this.statusFns.add(fn); return () => void this.statusFns.delete(fn); }
   onPeers(fn: (p: Map<string, PresencePayload>, j: string[], l: string[]) => void) { this.peerFns.add(fn); return () => void this.peerFns.delete(fn); }
+  onTableReady(fn: (t: string) => void) { this.tableReadyFns.add(fn); return () => void this.tableReadyFns.delete(fn); }
 
   setPresence(p: PresencePayload) {
     this.pendingPresence = p;
     if (this.st === "live") this.track(p);
   }
 
-  send<T extends Topic>(topic: T, data: PayloadOf<T>) {
-    if (this.st !== "live") return; // dropped, never queued
-    void this.channel.send({ type: "broadcast", event: topic, payload: data });
+  joinTable(tableId: string | null) {
+    if ((this.table?.id ?? null) === tableId) return;
+    if (this.table) {
+      const old = this.table.ch;
+      this.table = null;
+      void this.client.removeChannel(old);
+    }
+    if (!tableId) return;
+    const ch = this.client.channel(tableChannelName(this.venue, this.shop, tableId), {
+      config: { broadcast: { self: false, ack: false }, private: this.isPrivate },
+    });
+    this.listen(ch, TABLE_TOPICS);
+    const entry = { id: tableId, ch, live: false };
+    this.table = entry;
+    ch.subscribe((status) => {
+      if (this.table !== entry) return;
+      if (status === "SUBSCRIBED") {
+        entry.live = true;
+        this.tableReadyFns.forEach((fn) => fn(tableId));
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        entry.live = false;
+      }
+    });
+  }
+
+  send<T extends Topic>(topic: T, data: PayloadOf<T>, scope: Scope) {
+    const ch = scope === "table" ? (this.table?.live ? this.table.ch : null) : this.st === "live" ? this.channel : null;
+    if (!ch) return; // dropped, never queued
+    void ch.send({ type: "broadcast", event: topic, payload: data });
   }
 
   on<T extends Topic>(topic: T, fn: (data: PayloadOf<T>) => void) {
@@ -107,17 +142,20 @@ class SupabaseRoom implements NetRoom {
   async leave() {
     this.statusFns.clear();
     this.peerFns.clear();
-    TOPICS.forEach((t) => this.topicFns[t].clear());
+    this.tableReadyFns.clear();
+    (Object.keys(this.topicFns) as Topic[]).forEach((t) => this.topicFns[t].clear());
+    if (this.table) { await this.client.removeChannel(this.table.ch); this.table = null; }
     try { await this.channel.untrack(); } catch { /* ignore */ }
     await this.client.removeChannel(this.channel);
   }
 }
 
 /**
- * Walk shop-1, shop-2, ... and join the first one with room.
- * A shop is "full" at SHOP_CAPACITY people; two people racing for the last spot may both get in, which is fine.
+ * Join a channel of the given venue. With `preferred` set, join exactly that channel;
+ * otherwise walk ch-1 … ch-CHANNEL_COUNT and take the first with room (the last one if all are full).
+ * Two people racing for the last spot may both get in, which is fine.
  */
-export async function joinShop(client: SupabaseClient, myId: string, isPrivate: boolean): Promise<NetRoom> {
+export async function joinShop(client: SupabaseClient, myId: string, isPrivate: boolean, venue: Venue, preferred: number | null): Promise<NetRoom> {
   if (isPrivate) {
     let { data: { session } } = await client.auth.getSession();
     if (!session) {
@@ -128,15 +166,17 @@ export async function joinShop(client: SupabaseClient, myId: string, isPrivate: 
     // make sure the socket carries the user's JWT before joining a private channel
     if (session) await client.realtime.setAuth(session.access_token);
   }
-  let last: SupabaseRoom | null = null;
-  for (let shop = 1; shop <= MAX_SHOPS; shop++) {
-    const room = new SupabaseRoom(client, myId, shop, isPrivate);
+  if (preferred) {
+    const room = new SupabaseRoom(client, myId, venue, preferred, isPrivate);
+    await room.join();
+    return room;
+  }
+  for (let ch = 1; ch <= CHANNEL_COUNT; ch++) {
+    const room = new SupabaseRoom(client, myId, venue, ch, isPrivate);
     await room.join();
     const n = await room.headcount();
-    if (n < SHOP_CAPACITY || shop === MAX_SHOPS) return room;
-    last = room;
+    if (n < CHANNEL_CAPACITY || ch === CHANNEL_COUNT) return room;
     await room.leave();
   }
-  if (last) return last;
-  throw new Error("no shop available");
+  throw new Error("no channel available");
 }

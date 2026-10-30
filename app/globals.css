@@ -108,3 +108,28 @@ body {
   .btn { min-width: 58px; padding: 9px 10px; font-size: 14px; }
   .sign b { font-size: 16px; }
 }
+
+/* venue switch + channel select inside the sign */
+.signRow { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+.miniBtn { font: 800 12px var(--f-body); background: var(--paper); color: var(--ink); border: 2px solid var(--ink); border-radius: 6px; padding: 3px 8px; cursor: pointer; box-shadow: 0 2px 0 var(--ink); }
+.miniBtn:active { transform: translateY(1px); box-shadow: 0 1px 0 var(--ink); }
+.chSelect select { font: 800 12px var(--f-body); background: var(--night); color: var(--paper); border: 2px solid var(--wood-hi); border-radius: 6px; padding: 3px 6px; cursor: pointer; }
+.chSelect select:disabled { opacity: 0.5; }
+.miniBtn:focus-visible, .chSelect select:focus-visible, .venueCard:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* venue picker at the door */
+.overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: calc(16px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); background: rgba(18, 12, 9, 0.62); }
+.picker { width: min(520px, 100%); background: var(--paper); color: var(--ink); border: 2px solid var(--ink); border-radius: 10px; box-shadow: 0 5px 0 var(--ink); padding: 18px; display: flex; flex-direction: column; gap: 14px; align-items: stretch; }
+.picker h2 { margin: 0; font: 28px var(--f-display); text-align: center; text-wrap: balance; }
+.venues { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.venueCard { position: relative; display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 16px 14px 14px; border: 2px solid var(--ink); border-radius: 10px; cursor: pointer; box-shadow: 0 3px 0 var(--ink); font-family: var(--f-body); min-width: 0; }
+.venueCard b { font: 24px var(--f-display); }
+.venueCard span { font-size: 13px; line-height: 1.5; }
+.venueCard em { position: absolute; top: 8px; right: 10px; font-style: normal; font-size: 11px; font-weight: 800; opacity: 0.75; }
+.venueCard.izakaya { background: #24324f; color: var(--paper); }
+.venueCard.pocha { background: #e0702a; color: #fff8ec; }
+.venueCard.here { opacity: 0.7; }
+.venueCard:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+.picker > .btn { align-self: center; }
+@media (max-width: 420px) { .venues { grid-template-columns: 1fr; } }

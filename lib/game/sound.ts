@@ -68,3 +68,6 @@ export class Sound {
     this.ctx = null;
   }
 }
+
+/** One audio context for the whole page, so switching venues keeps sound unlocked. */
+export const sound = new Sound();

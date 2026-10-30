@@ -1,11 +1,11 @@
 import * as THREE from "three";
 import {
-  CHEER_WINDOW_MS, COLORS, COUNTER_FRONT_Z, DISHES, FULL, MASTER_POUR_AFTER_S, MOVE_HZ, PLATE_REFILL_MS, ROOM,
-  SAY_COOLDOWN_MS, STATE_HEARTBEAT_MS, TABLES, TABLE_HALF, clampInt,
+  CHEER_WINDOW_MS, COLORS, COUNTER_FRONT_Z, FULL, VENUE_DISHES, VENUE_INFO, MASTER_POUR_AFTER_S, MOVE_HZ, PLATE_REFILL_MS, ROOM,
+  SAY_COOLDOWN_MS, STATE_HEARTBEAT_MS, TABLES, TABLE_HALF, clampInt, type Dish, type Venue,
 } from "./constants";
 import { type Avatar, disposeChar, makeChar, playAnim, updateChar } from "./character";
 import { PHRASE_MAP, UI, type Lang } from "./i18n";
-import { Sound } from "./sound";
+import { sound } from "./sound";
 import { buildWorld, type Seat, type World } from "./world";
 import type { EventPayload, MovePayload, NetRoom, NetStatus, PlateState, PresencePayload, StatePayload } from "../net/protocol";
 import { PROTOCOL_VERSION } from "../net/protocol";
@@ -19,6 +19,9 @@ export type Snapshot = {
   muted: boolean;
   seated: boolean;
   canSit: boolean;
+  venue: Venue;
+  /** standing in the doorway: React shows the venue picker */
+  atDoor: boolean;
   targets: Target[];
   selTarget: string | null;
   canPour: boolean;
@@ -26,7 +29,7 @@ export type Snapshot = {
   dish: { name: string; left: number } | null;
   hint: string | null;
   stats: { drank: number; poured: number; got: number };
-  net: { mode: "connecting" | "live" | "solo" | "offline"; people: number; shop: number };
+  net: { mode: "connecting" | "live" | "solo" | "offline"; people: number; channel: number };
   toast: { id: number; text: string } | null;
 };
 
@@ -66,7 +69,9 @@ export class Engine {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(55, 1, 0.1, 60);
   private world: World;
-  private sound = new Sound();
+  private sound = sound;
+  readonly venue: Venue;
+  private dishes: Dish[];
   private raf = 0;
   private disposers: (() => void)[] = [];
 
@@ -112,6 +117,8 @@ export class Engine {
   private wasWalking = false;
   private lastHeartbeat = 0;
   private toastState: Snapshot["toast"] = null;
+  private atDoor = false;
+  private doorDismissed = false;
   private toastSeq = 0;
 
   private snap: Snapshot;
@@ -119,7 +126,9 @@ export class Engine {
   private listeners = new Set<() => void>();
   private lastSnapAt = 0;
 
-  constructor(private mount: HTMLElement, private labels: HTMLElement) {
+  constructor(private mount: HTMLElement, private labels: HTMLElement, opts: { venue: Venue }) {
+    this.venue = opts.venue;
+    this.dishes = VENUE_DISHES[opts.venue];
     this.myId = makeId();
     this.lang = store.get("sakaba.lang") === "ja" ? "ja" : "ko";
     this.sound.muted = store.get("sakaba.mute") === "1";
@@ -127,11 +136,11 @@ export class Engine {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
     mount.appendChild(this.renderer.domElement);
-    this.world = buildWorld(this.scene);
+    this.world = buildWorld(this.scene, this.venue);
 
-    this.master = makeChar(this.scene, 0xf2e7cd, 0x2a2a3a, 0xf7f7f7);
+    this.master = this.venue === "izakaya" ? makeChar(this.scene, 0xf2e7cd, 0x2a2a3a, 0xf7f7f7) : makeChar(this.scene, 0x2c63b8, 0xb03a2e, 0xd23b2b);
     this.master.root.position.set(0.3, 0, -4.0);
-    this.masterLabel = this.mkLabel("大将", false);
+    this.masterLabel = this.mkLabel(VENUE_INFO[this.venue].npc[this.lang], false);
     this.masterBubble = this.mkBubble();
 
     this.snap = this.computeSnapshot();
@@ -151,12 +160,15 @@ export class Engine {
     store.set("sakaba.lang", l);
     if (this.myLabel) this.myLabel.textContent = `${l === "ja" ? "🇯🇵" : "🇰🇷"} ${this.me.nick}`;
     if (this.bot.label) this.bot.label.textContent = "🤖 " + this.T.botName;
+    this.masterLabel.textContent = VENUE_INFO[this.venue].npc[l];
     this.pushPresence();
     this.refresh(true);
   }
   toggleMute() { this.sound.muted = !this.sound.muted; store.set("sakaba.mute", this.sound.muted ? "1" : "0"); this.refresh(true); }
   setJoy(x: number, y: number) { this.joy.x = x; this.joy.y = y; }
   setTarget(id: string) { this.selTarget = id; this.refresh(true); }
+  /** "Stay here" in the venue picker: don't ask again until I step away from the door. */
+  dismissDoor() { this.doorDismissed = true; this.atDoor = false; this.refresh(true); }
 
   /** Called from the entrance form submit (a user gesture, so audio can start). */
   enter(nick: string, lang: Lang, connect: () => Promise<NetRoom | null>) {
@@ -263,7 +275,6 @@ export class Engine {
     Object.values(this.refillTimers).forEach((t) => t && clearTimeout(t));
     void this.room?.leave();
     this.room = null;
-    this.sound.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.labels.textContent = "";
@@ -276,40 +287,62 @@ export class Engine {
     this.room = room;
     this.netMode = room.status() === "live" ? "live" : "connecting";
     this.disposers.push(
-      room.onStatus((s: NetStatus) => { this.netMode = s === "live" ? "live" : s === "offline" ? "offline" : "connecting"; if (s === "live") { this.pushPresence(); this.sendState(); } this.refresh(true); }),
+      room.onStatus((s: NetStatus) => { this.netMode = s === "live" ? "live" : s === "offline" ? "offline" : "connecting"; if (s === "live") { this.pushPresence(); this.sendPosition(); } this.refresh(true); }),
       room.onPeers((peers, joined) => this.onPeers(peers, joined)),
+      // my table channel is up: tell the table my glass and plate
+      room.onTableReady(() => setTimeout(() => this.sendState(), 100 + Math.random() * 400)),
       room.on("mv", (d) => this.onMove(d)),
       room.on("st", (d) => this.onState(d)),
       room.on("ev", (d) => this.onEvent(d)),
     );
     this.pushPresence();
-    this.sendState();
+    this.sendPosition();
+    if (this.me.seat) room.joinTable(this.world.seats[this.me.seat].table);
     this.refresh(true);
   }
 
   private pushPresence() {
     this.room?.setPresence({ v: PROTOCOL_VERSION, id: this.myId, nick: this.me.nick, lang: this.lang, col: this.me.col, seat: this.me.seat, seatT: this.me.seatT });
   }
+  /** Glass and the plate I keep, to my table only. Meaningless while standing. */
   private sendState() {
     if (!this.room || !this.entered) return;
     this.lastHeartbeat = now();
-    this.room.send("st", { id: this.myId, glass: this.me.glass, pl: this.me.pl, x: r2(this.me.x), z: r2(this.me.z), ry: r2(this.me.ry) });
+    if (this.me.seat) this.room.send("st", { id: this.myId, glass: this.me.glass, pl: this.me.pl }, "table");
   }
-  private sendEv(e: EventPayload) { this.room?.send("ev", e); }
+  /** Where I stand, to the whole shop. Seated people need no position: the seat id says it. */
+  private sendPosition() {
+    if (!this.room || !this.entered) return;
+    this.lastHeartbeat = now();
+    if (!this.me.seat) this.room.send("mv", { id: this.myId, x: r2(this.me.x), z: r2(this.me.z), ry: r2(this.me.ry) }, "shop");
+  }
+  /** Table actions go to my table; only phrases may be said while standing, and those go to the shop. */
+  private sendEv(e: EventPayload) {
+    if (!this.room) return;
+    if (this.me.seat) this.room.send("ev", e, "table");
+    else if (e.k === "say") this.room.send("ev", e, "shop");
+  }
 
   private onPeers(peers: Map<string, PresencePayload>, joined: string[]) {
+    let satAtMyTable = false;
     for (const [id, p] of peers) {
       const r = this.remotes.get(id);
+      const prevSeat = r ? r.pres.seat : null;
       if (!r) this.createRemote(id, p);
       else {
         const relabel = r.pres.nick !== p.nick || r.pres.lang !== p.lang;
         r.pres = sanitizePresence(p);
         if (relabel) this.setRemoteLabel(r);
       }
+      const seat = this.remotes.get(id)!.pres.seat;
+      if (seat && seat !== prevSeat && this.sameTableAsMe(seat)) satAtMyTable = true;
     }
     for (const id of [...this.remotes.keys()]) if (!peers.has(id)) this.removeRemote(id);
-    // newcomers need everyone's slow state; reply with a little jitter
-    if (joined.length) setTimeout(() => this.sendState(), 150 + Math.random() * 600);
+    // Replies are spread over a couple of seconds so a full shop does not answer all at once.
+    // Someone new in the shop needs to know where standing people are...
+    if (joined.length && !this.me.seat) setTimeout(() => this.sendPosition(), 200 + Math.random() * 2300);
+    // ...and someone who just sat at my table needs my glass and plate.
+    if (satAtMyTable) setTimeout(() => this.sendState(), 200 + Math.random() * 1500);
     if (this.remotes.size && this.bot.active) this.botLeave();
     this.resolveMySeat();
     this.maybeBot();
@@ -325,10 +358,9 @@ export class Engine {
     const r = this.remotes.get(d.id);
     if (!r) return;
     r.glass = clampInt(d.glass, 0, FULL);
-    const pl = d.pl && this.world.plates[d.pl.id] ? validPlate(d.pl) : null;
+    const pl = d.pl && this.world.plates[d.pl.id] ? validPlate(d.pl, this.dishes) : null;
     r.pl = pl ? { id: d.pl!.id, ...pl } : null;
-    if (r.pl) this.plateCache[r.pl.id] = validPlate(r.pl)!;
-    this.onMove({ id: d.id, x: d.x, z: d.z, ry: d.ry });
+    if (r.pl) this.plateCache[r.pl.id] = validPlate(r.pl, this.dishes)!;
     this.refresh();
   }
   private onEvent(e: EventPayload) {
@@ -350,7 +382,7 @@ export class Engine {
         if (e.to === this.myId) this.receivePour(r.pres.nick, r.pres.seat);
         break;
       case "eat":
-        playAnim(r.av, "eat", clampInt(e.d, 0, DISHES.length - 1));
+        playAnim(r.av, "eat", this.dishes[clampInt(e.d, 0, this.dishes.length - 1)]);
         if (sameTable) this.sound.eat();
         if (this.world.plates[e.pl] && r.pres.seat && this.world.seats[r.pres.seat]?.plate === e.pl) this.takePiece(e.pl);
         break;
@@ -364,7 +396,8 @@ export class Engine {
     const pres = sanitizePresence(p);
     const av = makeChar(this.scene, pres.col, 0x3b4a5e);
     av.root.position.set(0, 0, 4);
-    const r: Remote = { id, pres, glass: 0, pl: null, x: 0, z: 4, ry: Math.PI, hasPos: false, av, label: this.mkLabel("", false), bubble: this.mkBubble(), cheerAt: -1e9 };
+    // glass level of people at other tables is never sent to me; show them mid-glass
+    const r: Remote = { id, pres, glass: FULL - 1, pl: null, x: 0, z: 4, ry: Math.PI, hasPos: false, av, label: this.mkLabel("", false), bubble: this.mkBubble(), cheerAt: -1e9 };
     this.setRemoteLabel(r);
     this.remotes.set(id, r);
   }
@@ -372,7 +405,7 @@ export class Engine {
   private removeRemote(id: string) {
     const r = this.remotes.get(id);
     if (!r) return;
-    if (r.pl) this.plateCache[r.pl.id] = validPlate(r.pl)!;
+    if (r.pl) this.plateCache[r.pl.id] = validPlate(r.pl, this.dishes)!;
     disposeChar(r.av);
     r.label.remove();
     r.bubble.el.remove();
@@ -437,7 +470,7 @@ export class Engine {
     this.masterWait = 0;
     this.selTarget = null;
     this.pushPresence();
-    this.sendState();
+    this.room?.joinTable(seat.table); // glass and plate go out once the table channel is ready
     this.sound.pop();
     this.refresh(true);
   }
@@ -451,7 +484,8 @@ export class Engine {
     this.camDist = 4.2;
     this.pushPresence();
     this.syncMyPlate(this.occupancy());
-    this.sendState();
+    this.room?.joinTable(null);
+    this.sendPosition();
     this.refresh(true);
   }
   private receivePour(nick: string, fromSeat: string | null) {
@@ -463,7 +497,7 @@ export class Engine {
     this.toast(this.T.poured(nick));
     this.refresh(true);
   }
-  private playMine(k: "drink" | "pour" | "eat" | "cheer", d?: number) { if (this.myAv) playAnim(this.myAv, k, d); }
+  private playMine(k: "drink" | "pour" | "eat" | "cheer", d?: number) { if (this.myAv) playAnim(this.myAv, k, d === undefined ? undefined : this.dishes[d]); }
 
   private checkClink(tableId: string) {
     const t = now();
@@ -495,21 +529,21 @@ export class Engine {
   private plateState(pid: string, occ: Record<string, Occupant>): PlateRuntime {
     const owner = this.plateOwner(pid, occ);
     if (owner === "me" && this.me.pl && this.me.pl.id === pid) return this.me.pl;
-    if (owner === "bot") return this.botPlates[pid] || (this.botPlates[pid] = { ...(this.plateCache[pid] || defaultPlate(pid)) });
+    if (owner === "bot") return this.botPlates[pid] || (this.botPlates[pid] = { ...(this.plateCache[pid] || defaultPlate(pid, this.dishes)) });
     if (owner && owner !== "me") {
       const r = this.remotes.get(owner);
       if (r?.pl && r.pl.id === pid) return r.pl;
     }
-    return this.plateCache[pid] || defaultPlate(pid);
+    return this.plateCache[pid] || defaultPlate(pid, this.dishes);
   }
   private syncMyPlate(occ: Record<string, Occupant>) {
     const pid = this.me.seat ? this.world.seats[this.me.seat].plate : null;
     const mine = !!pid && this.plateOwner(pid, occ) === "me";
     if (mine && (!this.me.pl || this.me.pl.id !== pid)) {
-      this.me.pl = { id: pid!, ...(this.plateCache[pid!] || defaultPlate(pid!)) };
+      this.me.pl = { id: pid!, ...(this.plateCache[pid!] || defaultPlate(pid!, this.dishes)) };
       this.sendState();
     } else if (!mine && this.me.pl) {
-      this.plateCache[this.me.pl.id] = validPlate(this.me.pl)!;
+      this.plateCache[this.me.pl.id] = validPlate(this.me.pl, this.dishes)!;
       this.me.pl = null;
       this.sendState();
     }
@@ -529,14 +563,14 @@ export class Engine {
       this.refillTimers[pid] = null;
       const cur = get();
       if (!cur || cur.l > 0) return;
-      set(freshPlate(cur.d));
+      set(freshPlate(cur.d, this.dishes));
       this.refresh(true);
     }, PLATE_REFILL_MS);
   }
   private takePiece(pid: string) {
     if (this.me.pl && this.me.pl.id === pid && this.me.pl.l > 0) {
       this.me.pl = { ...this.me.pl, l: this.me.pl.l - 1, v: this.me.pl.v + 1 };
-      this.plateCache[pid] = validPlate(this.me.pl)!;
+      this.plateCache[pid] = validPlate(this.me.pl, this.dishes)!;
       this.sendState();
       return true;
     }
@@ -601,7 +635,7 @@ export class Engine {
     if (r < 0.6) {
       const pid = this.world.seats[BOT_SEAT].plate;
       const st = this.plateState(pid, this.occupancy());
-      if (st.l > 0 && this.takePiece(pid)) { playAnim(b.av, "eat", st.d); if (opp) this.sound.eat(); return; }
+      if (st.l > 0 && this.takePiece(pid)) { playAnim(b.av, "eat", this.dishes[st.d]); if (opp) this.sound.eat(); return; }
     }
     if (opp && r < 0.75) this.botSay(["dots", "yum", "tired", "week"][(Math.random() * 4) | 0], 0);
   }
@@ -762,9 +796,9 @@ export class Engine {
         d = Math.atan2(Math.sin(d), Math.cos(d));
         me.ry += d * Math.min(1, dt * 12);
         av.speed = mag * run;
-        if (t - this.lastMove > 1000 / MOVE_HZ) { this.lastMove = t; this.room?.send("mv", { id: this.myId, x: r2(me.x), z: r2(me.z), ry: r2(me.ry) }); }
+        if (t - this.lastMove > 1000 / MOVE_HZ) { this.lastMove = t; this.sendPosition(); }
       } else av.speed = 0;
-      if (this.wasWalking && !walking) this.sendState(); // final resting position
+      if (this.wasWalking && !walking) this.sendPosition(); // final resting position
       this.wasWalking = walking;
       av.root.position.set(me.x, av.root.position.y, me.z);
       av.root.rotation.y = me.ry;
@@ -776,6 +810,11 @@ export class Engine {
         if (d < bd) { bd = d; best = s; }
       }
       if (best !== this.nearSeat) { this.nearSeat = best; this.refresh(true); }
+      // walking out through the entrance opens the venue picker
+      const inDoor = me.z > 4.25 && Math.abs(me.x) < 1.1;
+      if (!inDoor) this.doorDismissed = false;
+      const at = inDoor && !this.doorDismissed;
+      if (at !== this.atDoor) { this.atDoor = at; this.refresh(true); }
     } else {
       const s = this.world.seats[me.seat];
       av.root.position.set(s.x, av.root.position.y, s.z);
@@ -790,13 +829,13 @@ export class Engine {
           playAnim(this.master, "pour");
           this.showBubble(this.masterBubble, "one");
           setTimeout(() => {
-            if (this.me.seat && this.me.glass === 0) { this.me.glass = FULL; this.stats.got++; this.sendState(); this.sound.pour(); this.toast(this.T.master); }
+            if (this.me.seat && this.me.glass === 0) { this.me.glass = FULL; this.stats.got++; this.sendState(); this.sound.pour(); this.toast(this.T.masterPoured(VENUE_INFO[this.venue].npc[this.lang])); }
           }, 800);
         }
       } else this.masterWait = 0;
     }
     updateChar(av, dt);
-    if (t - this.lastHeartbeat > STATE_HEARTBEAT_MS) this.sendState();
+    if (t - this.lastHeartbeat > STATE_HEARTBEAT_MS) { if (me.seat) this.sendState(); else this.sendPosition(); }
 
     const occ = this.occupancy();
     for (const r of this.remotes.values()) {
@@ -871,7 +910,7 @@ export class Engine {
       if (this.me.seat && this.world.seats[this.me.seat].plate === pid) {
         const key = `${st.d}`;
         const prev = this.lastDishSeen[pid];
-        if (prev !== undefined && prev !== key && st.l === DISHES[st.d].n) this.toast(this.T.refill(DISHES[st.d][this.lang]));
+        if (prev !== undefined && prev !== key && st.l === this.dishes[st.d].n) this.toast(this.T.refill(this.dishes[st.d][this.lang]));
         this.lastDishSeen[pid] = key;
       } else delete this.lastDishSeen[pid];
     }
@@ -899,14 +938,16 @@ export class Engine {
       muted: this.sound.muted,
       seated,
       canSit: !seated && !!this.nearSeat,
+      venue: this.venue,
+      atDoor: this.atDoor,
       targets: tg.map((x) => ({ id: x.id, nick: x.nick, glass: x.glass })),
       selTarget: this.selTarget,
       canPour: !!cur && cur.glass < FULL && now() >= this.pourCooldown,
       canDrink: this.me.glass > 0,
-      dish: plate ? { name: DISHES[plate.d][this.lang], left: plate.l } : null,
+      dish: plate ? { name: this.dishes[plate.d][this.lang], left: plate.l } : null,
       hint,
       stats: { ...this.stats },
-      net: { mode: this.netMode, people: this.remotes.size + 1, shop: this.room?.shop ?? 0 },
+      net: { mode: this.netMode, people: this.remotes.size + 1, channel: this.room?.shop ?? 0 },
       toast: this.toastState,
     };
   }
@@ -951,20 +992,20 @@ function sanitizePresence(p: PresencePayload): PresencePayload {
     seatT: Number(p.seatT) || 0,
   };
 }
-function validPlate(s: { d: unknown; l: unknown; v: unknown } | null | undefined): PlateRuntime | null {
+function validPlate(s: { d: unknown; l: unknown; v: unknown } | null | undefined, D: Dish[]): PlateRuntime | null {
   if (!s) return null;
   const d = Number(s.d);
-  if (!Number.isInteger(d) || d < 0 || d >= DISHES.length) return null;
-  return { d, l: clampInt(s.l, 0, DISHES[d].n), v: Number(s.v) || 0 };
+  if (!Number.isInteger(d) || d < 0 || d >= D.length) return null;
+  return { d, l: clampInt(s.l, 0, D[d].n), v: Number(s.v) || 0 };
 }
-function freshPlate(prev: number): PlateRuntime {
+function freshPlate(prev: number, D: Dish[]): PlateRuntime {
   let d: number;
-  do d = (Math.random() * DISHES.length) | 0;
-  while (DISHES.length > 1 && d === prev);
-  return { d, l: DISHES[d].n, v: Date.now() % 100000 };
+  do d = (Math.random() * D.length) | 0;
+  while (D.length > 1 && d === prev);
+  return { d, l: D[d].n, v: Date.now() % 100000 };
 }
-function defaultPlate(id: string): PlateRuntime {
+function defaultPlate(id: string, D: Dish[]): PlateRuntime {
   const k = [...id].reduce((a, c) => a + c.charCodeAt(0), 0);
-  const d = k % DISHES.length;
-  return { d, l: DISHES[d].n, v: 0 };
+  const d = k % D.length;
+  return { d, l: D[d].n, v: 0 };
 }
