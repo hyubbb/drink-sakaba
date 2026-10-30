@@ -735,7 +735,7 @@ export class Engine {
       this.camera.position.set(Math.sin(this.introA) * 1.5, 2.2, 6.2);
       this.camera.lookAt(0, 1.0, 0);
       this.renderPlates({});
-      this.placeDom(this.masterLabel, this.master.root.position, 1.85);
+      this.placeDom(this.masterLabel, this.master.root.position, 1.72);
       this.renderer.render(this.scene, this.camera);
       return;
     }
@@ -819,14 +819,14 @@ export class Engine {
         ra.speed = Math.min(1.6, Math.hypot(ra.root.position.x - ox, ra.root.position.z - oz) / Math.max(dt, 1e-3) / 2.4);
       }
       updateChar(ra, dt);
-      this.placeDom(r.label, ra.root.position, 1.95);
-      this.tickBubble(r.bubble, ra.root.position, 2.25, t);
+      this.placeDom(r.label, ra.root.position, 1.78);
+      this.tickBubble(r.bubble, ra.root.position, 1.78, t);
     }
     if (this.bot.active && this.bot.av) {
       this.botTick();
       updateChar(this.bot.av, dt);
-      if (this.bot.label) this.placeDom(this.bot.label, this.bot.av.root.position, 1.95);
-      if (this.bot.bubble) this.tickBubble(this.bot.bubble, this.bot.av.root.position, 2.25, t);
+      if (this.bot.label) this.placeDom(this.bot.label, this.bot.av.root.position, 1.78);
+      if (this.bot.bubble) this.tickBubble(this.bot.bubble, this.bot.av.root.position, 1.78, t);
     }
 
     this.syncMyPlate(occ);
@@ -855,10 +855,10 @@ export class Engine {
     this.camera.lookAt(this.lookAt);
 
     // seated, my own name tag would float over the person across the table, so hide it
-    if (this.myLabel) { this.myLabel.hidden = !!me.seat; if (!me.seat) this.placeDom(this.myLabel, av.root.position, 1.95); }
-    if (this.myBubble) this.tickBubble(this.myBubble, av.root.position, 2.25, t);
-    this.placeDom(this.masterLabel, this.master.root.position, 1.85);
-    this.tickBubble(this.masterBubble, this.master.root.position, 2.15, t);
+    if (this.myLabel) { this.myLabel.hidden = !!me.seat; if (!me.seat) this.placeDom(this.myLabel, av.root.position, 1.78); }
+    if (this.myBubble) this.tickBubble(this.myBubble, av.root.position, 1.78, t);
+    this.placeDom(this.masterLabel, this.master.root.position, 1.72);
+    this.tickBubble(this.masterBubble, this.master.root.position, 1.72, t);
 
     if (t - this.lastSnapAt > 200) this.refresh();
     this.renderer.render(this.scene, this.camera);
