@@ -1,0 +1,22 @@
+# Push the bar's visitor count to metamoa every 10 minutes.
+# Does nothing until the repository secret CRON_SECRET is set (same value as on Vercel).
+# Repository variable SITE_URL overrides the default address.
+name: metamoa live count
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      SITE_URL: ${{ vars.SITE_URL || 'https://drink-sakaba.vercel.app' }}
+    steps:
+      - name: Send count
+        if: env.CRON_SECRET != ''
+        run: |
+          curl -fsS -H "Authorization: Bearer $CRON_SECRET" "${SITE_URL%/}/api/metamoa/live"

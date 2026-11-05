@@ -35,6 +35,7 @@ BroadcastChannel로 서로 보입니다.
 | `npm run typecheck` | 타입 체크만 |
 
 백엔드 설정은 [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)를 보세요.
+메타모아 등록과 접속자 수·업데이트·이벤트 API 연결은 [docs/METAMOA.md](docs/METAMOA.md)를 보세요.
 
 ## 규칙
 

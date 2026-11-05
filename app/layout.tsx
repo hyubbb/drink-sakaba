@@ -4,6 +4,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "술집 酒場",
   description: "모르는 사람과 마주 앉아 한 잔씩 따라 주는 온라인 혼술집 · 知らない誰かと向かい合って、一杯ずつ注ぎあう店",
+  // metamoa owner check: <meta name="metamoa-site-verification" content="..."> once the code is set (needs a redeploy)
+  ...(process.env.METAMOA_SITE_VERIFICATION
+    ? { other: { "metamoa-site-verification": process.env.METAMOA_SITE_VERIFICATION } }
+    : {}),
 };
 
 export const viewport: Viewport = {
