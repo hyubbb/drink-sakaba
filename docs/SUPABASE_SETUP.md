@@ -9,6 +9,7 @@ app needs from Supabase and Vercel. Do the steps in order and report the results
 - **Supabase Realtime only.** Broadcast + Presence on two levels of channels:
   - venue channels `sakaba:<venue>:ch-<n>` — venue is `izakaya` or `pocha`, n is 1–5 (10 channels in total)
   - table channels `sakaba:<venue>:ch-<n>:t1` / `:t2` — only the people seated at that table
+  - lobby channels `sakaba:<venue>:lobby` — everyone in that venue, presence `{ ch }` only, for the per-channel headcount
 - **No database tables, no Storage, no Edge Functions** in phase 1. Nothing is persisted.
 - Phase 2 (optional, anti-abuse): **Anonymous Sign-ins** + **private channels** with RLS policies on `realtime.messages`.
 
@@ -16,6 +17,7 @@ Traffic design (already implemented in `lib/net/`):
 
 | Kind | Channel | Used for | When it is sent |
 | --- | --- | --- | --- |
+| Presence | lobby | which channel I am in (`{ ch }`) | enter, channel change |
 | Presence | venue | nickname, language, colour, seat, seat timestamp | enter, sit, stand, language change |
 | Broadcast `mv` | venue | position of people standing | 5 times per second while walking, once on stop, once (spread over ~2.5 s) when someone joins |
 | Broadcast `ev` (say) | venue | phrases said while standing | once per phrase |
@@ -23,7 +25,7 @@ Traffic design (already implemented in `lib/net/`):
 | Broadcast `ev` | table | drink, pour, eat, cheer, phrase | once per action |
 
 A channel holds 16 people (`CHANNEL_CAPACITY` in `lib/game/constants.ts`). Players can pick a channel in the
-top-left sign; otherwise the client takes the first of ch-1 … ch-5 with room. Moving between izakaya and pocha
+top-left sign, which shows each channel's headcount from the lobby; otherwise the client takes the first of ch-1 … ch-5 with room. Moving between izakaya and pocha
 leaves one venue channel and joins the other.
 
 ---

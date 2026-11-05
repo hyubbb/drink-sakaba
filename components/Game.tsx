@@ -32,8 +32,8 @@ function savedVenue(): Venue {
 function connector(engine: Engine, place: Place) {
   return async (): Promise<NetRoom | null> => {
     if (LOCAL) {
-      const { LocalRoom } = await import("@/lib/net/localRoom");
-      return new LocalRoom(engine.myId, place.venue, place.channel ?? 1);
+      const { openLocalRoom } = await import("@/lib/net/localRoom");
+      return openLocalRoom(engine.myId, place.venue, place.channel);
     }
     const sb = getSupabase();
     if (!sb) return null;

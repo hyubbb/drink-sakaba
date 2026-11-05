@@ -9,6 +9,10 @@
  *    "mv"      position of people standing up: 5 Hz while walking, once on stop, once in reply to a join
  *    "ev" say  phrases said while standing (greeting someone before sitting)
  *
+ *  Lobby         `sakaba:<venue>:lobby`     everyone in the venue, any channel
+ *    Presence  { ch } only: which channel I am in. Feeds the per-channel headcount in the
+ *              channel picker and the "first channel with room" choice. Changes on join/leave only.
+ *
  *  Table channel `sakaba:<venue>:ch-N:t1`  only the ≤ 6 people seated at that table
  *    "st"      glass level and the shared plate I keep; on change, when someone sits down, every heartbeat
  *    "ev"      drink / pour / eat / cheer / say
@@ -62,6 +66,9 @@ export interface NetRoom {
   setPresence(p: PresencePayload): void;
   /** Join the table channel for the seat I just took, or leave it with null. */
   joinTable(tableId: string | null): void;
+  /** People in each channel of this venue (1 … CHANNEL_COUNT), me included; null until known. */
+  channelCounts(): Record<number, number> | null;
+  onChannelCounts(fn: (counts: Record<number, number>) => void): () => void;
   /** Fires once the table channel is ready to send (after joinTable). */
   onTableReady(fn: (tableId: string) => void): () => void;
   /** Dropped (never queued) when that channel is not joined yet. */

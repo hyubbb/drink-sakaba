@@ -1,3 +1,4 @@
+import { CHANNEL_CAPACITY, CHANNEL_COUNT } from "../game/constants";
 import { PROTOCOL_VERSION, type NetRoom, type NetStatus, type PayloadOf, type PresencePayload, type Scope, type Topic } from "./protocol";
 
 /**
@@ -11,8 +12,75 @@ type Msg =
   | { t: "hello"; id: string }
   | { t: "bc"; topic: Topic; scope: string; d: { id: string } };
 
+/** Venue-wide { id, ch } heartbeats over BroadcastChannel, standing in for the Supabase lobby. */
+class LocalLobby {
+  private bc: BroadcastChannel;
+  private seen = new Map<string, { ch: number; at: number }>();
+  private fns = new Set<(c: Record<number, number>) => void>();
+  private mine: number | null = null;
+  private timer: ReturnType<typeof setInterval>;
+  private last: Record<number, number> | null = null;
+
+  constructor(private myId: string, venue: string) {
+    this.bc = new BroadcastChannel(`sakaba-local:${venue}:lobby`);
+    this.bc.onmessage = (e: MessageEvent<{ id: string; ch: number | null }>) => {
+      const { id, ch } = e.data || ({} as { id: string; ch: number | null });
+      if (!id || id === this.myId) return;
+      if (ch === null) this.seen.delete(id);
+      else if (id === "?") { if (this.mine) this.post(); return; }
+      else this.seen.set(id, { ch, at: Date.now() });
+      this.emit();
+    };
+    this.bc.postMessage({ id: "?", ch: 0 }); // ask everyone to announce themselves
+    this.timer = setInterval(() => {
+      if (this.mine) this.post();
+      const t = Date.now();
+      let changed = false;
+      for (const [k, v] of this.seen) if (t - v.at > 6000) { this.seen.delete(k); changed = true; }
+      if (changed) this.emit();
+    }, 2000);
+  }
+  private post() { this.bc.postMessage({ id: this.myId, ch: this.mine }); }
+  private emit() {
+    const c: Record<number, number> = {};
+    for (let i = 1; i <= CHANNEL_COUNT; i++) c[i] = 0;
+    for (const v of this.seen.values()) if (c[v.ch] !== undefined) c[v.ch]++;
+    if (this.mine && c[this.mine] !== undefined) c[this.mine]++;
+    this.last = c;
+    this.fns.forEach((fn) => fn(c));
+  }
+  track(ch: number) { this.mine = ch; this.post(); this.emit(); }
+  counts() { return this.last; }
+  onCounts(fn: (c: Record<number, number>) => void) { this.fns.add(fn); return () => void this.fns.delete(fn); }
+  leave() { this.bc.postMessage({ id: this.myId, ch: null }); clearInterval(this.timer); this.fns.clear(); this.bc.close(); }
+
+  /** Listen briefly, then report what we heard. */
+  static async open(myId: string, venue: string) {
+    const l = new LocalLobby(myId, venue);
+    await new Promise((r) => setTimeout(r, 600));
+    l.emit();
+    return l;
+  }
+}
+
+/** Same-browser room: picks a channel from the local lobby, like joinShop does with Supabase. */
+export async function openLocalRoom(myId: string, venue: string, preferred: number | null) {
+  const lobby = await LocalLobby.open(myId, venue);
+  const counts = lobby.counts() ?? {};
+  let ch = preferred ?? 0;
+  if (!ch) {
+    ch = 1;
+    for (let i = 1; i <= CHANNEL_COUNT; i++) if ((counts[i] ?? 0) < CHANNEL_CAPACITY) { ch = i; break; }
+  }
+  const room = new LocalRoom(myId, venue, ch);
+  room.lobby = lobby;
+  lobby.track(ch);
+  return room;
+}
+
 export class LocalRoom implements NetRoom {
   private bc: BroadcastChannel;
+  lobby: LocalLobby | null = null;
   private peers = new Map<string, { p: PresencePayload; seen: number }>();
   private known = new Set<string>();
   private mine: PresencePayload | null = null;
@@ -71,6 +139,8 @@ export class LocalRoom implements NetRoom {
   onStatus() { return () => {}; }
   onPeers(fn: (p: Map<string, PresencePayload>, j: string[], l: string[]) => void) { this.peerFns.add(fn); return () => void this.peerFns.delete(fn); }
   onTableReady(fn: (t: string) => void) { this.tableReadyFns.add(fn); return () => void this.tableReadyFns.delete(fn); }
+  channelCounts() { return this.lobby?.counts() ?? null; }
+  onChannelCounts(fn: (c: Record<number, number>) => void) { return this.lobby ? this.lobby.onCounts(fn) : () => {}; }
   setPresence(p: PresencePayload) { this.mine = p; this.post({ t: "pres", p }); }
   joinTable(tableId: string | null) {
     if (this.table === tableId) return;
@@ -88,6 +158,8 @@ export class LocalRoom implements NetRoom {
   }
   async leave() {
     this.bye();
+    this.lobby?.leave();
+    this.lobby = null;
     clearInterval(this.timer);
     window.removeEventListener("pagehide", this.bye);
     this.bc.close();

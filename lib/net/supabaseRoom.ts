@@ -5,7 +5,58 @@ import { PROTOCOL_VERSION, type NetRoom, type NetStatus, type PayloadOf, type Pr
 const SHOP_TOPICS: Topic[] = ["mv", "ev"];
 const TABLE_TOPICS: Topic[] = ["st", "ev"];
 export const shopChannelName = (venue: Venue, ch: number) => `sakaba:${venue}:ch-${ch}`;
+export const lobbyChannelName = (venue: Venue) => `sakaba:${venue}:lobby`;
 export const tableChannelName = (venue: Venue, ch: number, table: string) => `${shopChannelName(venue, ch)}:${table}`;
+
+/** Venue-wide presence of { ch } so everyone can see how full each channel is. */
+class Lobby {
+  readonly channel: RealtimeChannel;
+  private fns = new Set<(c: Record<number, number>) => void>();
+  private last: Record<number, number> | null = null;
+  private synced: Promise<void>;
+
+  constructor(private client: SupabaseClient, myId: string, venue: Venue, isPrivate: boolean) {
+    this.channel = client.channel(lobbyChannelName(venue), { config: { presence: { key: myId }, private: isPrivate } });
+    let done: () => void = () => {};
+    this.synced = new Promise<void>((r) => (done = r));
+    this.channel.on("presence", { event: "sync" }, () => {
+      this.last = this.compute();
+      done();
+      this.fns.forEach((fn) => fn(this.last!));
+    });
+  }
+
+  private compute() {
+    const counts: Record<number, number> = {};
+    for (let i = 1; i <= CHANNEL_COUNT; i++) counts[i] = 0;
+    const state = this.channel.presenceState() as Record<string, Array<{ ch?: unknown }>>;
+    for (const metas of Object.values(state)) {
+      const ch = Number(metas?.[metas.length - 1]?.ch);
+      if (Number.isInteger(ch) && ch >= 1 && ch <= CHANNEL_COUNT) counts[ch]++;
+    }
+    return counts;
+  }
+
+  /** Subscribe and wait for the first presence sync (or give up after a moment). */
+  join(timeoutMs = 4000) {
+    return new Promise<Record<number, number>>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(this.last ?? this.compute()), timeoutMs);
+      this.channel.subscribe((status) => {
+        if (status === "SUBSCRIBED") void this.synced.then(() => { clearTimeout(timer); resolve(this.last!); });
+        else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") { clearTimeout(timer); reject(new Error(`lobby ${status}`)); }
+      });
+    });
+  }
+
+  track(ch: number) { void this.channel.track({ ch }); }
+  counts() { return this.last; }
+  onCounts(fn: (c: Record<number, number>) => void) { this.fns.add(fn); return () => void this.fns.delete(fn); }
+  async leave() {
+    this.fns.clear();
+    try { await this.channel.untrack(); } catch { /* ignore */ }
+    await this.client.removeChannel(this.channel);
+  }
+}
 
 class SupabaseRoom implements NetRoom {
   private st: NetStatus = "connecting";
@@ -18,6 +69,7 @@ class SupabaseRoom implements NetRoom {
   private pendingPresence: PresencePayload | null = null;
   readonly channel: RealtimeChannel;
   private table: { id: string; ch: RealtimeChannel; live: boolean } | null = null;
+  lobby: Lobby | null = null;
 
   constructor(private client: SupabaseClient, readonly myId: string, private venue: Venue, readonly shop: number, private isPrivate: boolean) {
     this.channel = client.channel(shopChannelName(venue, shop), {
@@ -58,12 +110,6 @@ class SupabaseRoom implements NetRoom {
     });
   }
 
-  /** Distinct people currently in the shop (waits briefly for the first presence sync). */
-  async headcount(waitMs = 1200) {
-    await new Promise((r) => setTimeout(r, waitMs));
-    return Object.keys(this.channel.presenceState()).length;
-  }
-
   private setStatus(s: NetStatus) {
     if (this.st === s) return;
     this.st = s;
@@ -96,6 +142,8 @@ class SupabaseRoom implements NetRoom {
   onStatus(fn: (s: NetStatus) => void) { this.statusFns.add(fn); return () => void this.statusFns.delete(fn); }
   onPeers(fn: (p: Map<string, PresencePayload>, j: string[], l: string[]) => void) { this.peerFns.add(fn); return () => void this.peerFns.delete(fn); }
   onTableReady(fn: (t: string) => void) { this.tableReadyFns.add(fn); return () => void this.tableReadyFns.delete(fn); }
+  channelCounts() { return this.lobby?.counts() ?? null; }
+  onChannelCounts(fn: (c: Record<number, number>) => void) { return this.lobby ? this.lobby.onCounts(fn) : () => {}; }
 
   setPresence(p: PresencePayload) {
     this.pendingPresence = p;
@@ -145,15 +193,16 @@ class SupabaseRoom implements NetRoom {
     this.tableReadyFns.clear();
     (Object.keys(this.topicFns) as Topic[]).forEach((t) => this.topicFns[t].clear());
     if (this.table) { await this.client.removeChannel(this.table.ch); this.table = null; }
+    if (this.lobby) { await this.lobby.leave(); this.lobby = null; }
     try { await this.channel.untrack(); } catch { /* ignore */ }
     await this.client.removeChannel(this.channel);
   }
 }
 
 /**
- * Join a channel of the given venue. With `preferred` set, join exactly that channel;
- * otherwise walk ch-1 … ch-CHANNEL_COUNT and take the first with room (the last one if all are full).
- * Two people racing for the last spot may both get in, which is fine.
+ * Join a channel of the given venue. The venue lobby says how many people are in each channel:
+ * with `preferred` set, join exactly that channel; otherwise take the first with room
+ * (the emptiest one if all are full). Two people racing for the last spot may both get in, which is fine.
  */
 export async function joinShop(client: SupabaseClient, myId: string, isPrivate: boolean, venue: Venue, preferred: number | null): Promise<NetRoom> {
   if (isPrivate) {
@@ -166,17 +215,32 @@ export async function joinShop(client: SupabaseClient, myId: string, isPrivate: 
     // make sure the socket carries the user's JWT before joining a private channel
     if (session) await client.realtime.setAuth(session.access_token);
   }
-  if (preferred) {
-    const room = new SupabaseRoom(client, myId, venue, preferred, isPrivate);
-    await room.join();
-    return room;
+  const lobby = new Lobby(client, myId, venue, isPrivate);
+  let counts: Record<number, number> = {};
+  try {
+    counts = await lobby.join();
+  } catch (e) {
+    console.warn("[sakaba] lobby unavailable, headcounts hidden:", e);
   }
+  const ch = preferred ?? pickChannel(counts);
+  const room = new SupabaseRoom(client, myId, venue, ch, isPrivate);
+  try {
+    await room.join();
+  } catch (e) {
+    await lobby.leave();
+    throw e;
+  }
+  room.lobby = lobby;
+  lobby.track(ch);
+  return room;
+}
+
+export function pickChannel(counts: Record<number, number>) {
+  let best = 1;
   for (let ch = 1; ch <= CHANNEL_COUNT; ch++) {
-    const room = new SupabaseRoom(client, myId, venue, ch, isPrivate);
-    await room.join();
-    const n = await room.headcount();
-    if (n < CHANNEL_CAPACITY || ch === CHANNEL_COUNT) return room;
-    await room.leave();
+    const n = counts[ch] ?? 0;
+    if (n < CHANNEL_CAPACITY) return ch;
+    if (n < (counts[best] ?? 0)) best = ch;
   }
-  throw new Error("no channel available");
+  return best;
 }

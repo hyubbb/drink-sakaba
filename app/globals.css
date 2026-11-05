@@ -113,9 +113,30 @@ body {
 .signRow { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
 .miniBtn { font: 800 12px var(--f-body); background: var(--paper); color: var(--ink); border: 2px solid var(--ink); border-radius: 6px; padding: 3px 8px; cursor: pointer; box-shadow: 0 2px 0 var(--ink); }
 .miniBtn:active { transform: translateY(1px); box-shadow: 0 1px 0 var(--ink); }
-.chSelect select { font: 800 12px var(--f-body); background: var(--night); color: var(--paper); border: 2px solid var(--wood-hi); border-radius: 6px; padding: 3px 6px; cursor: pointer; }
-.chSelect select:disabled { opacity: 0.5; }
-.miniBtn:focus-visible, .chSelect select:focus-visible, .venueCard:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+/* channel picker: wooden tab that opens a paper menu with a fill meter per channel */
+.chPick { position: relative; }
+.chTrigger { display: inline-flex; align-items: center; gap: 6px; font: 800 12px var(--f-body); background: var(--night); color: var(--paper); border: 2px solid var(--wood-hi); border-radius: 6px; padding: 3px 8px 3px 9px; cursor: pointer; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.45); }
+.chTrigger:disabled { opacity: 0.5; cursor: default; }
+.chTrigger[aria-expanded="true"] { border-color: var(--amber); color: var(--amber); }
+.chCaret { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; transition: transform 0.15s; }
+.chTrigger[aria-expanded="true"] .chCaret { transform: rotate(180deg); }
+.chMenu { position: absolute; top: calc(100% + 8px); left: -6px; z-index: 20; width: 214px; max-width: calc(100vw - 32px); background: var(--paper); color: var(--ink); border: 2px solid var(--ink); border-radius: 10px; box-shadow: 0 4px 0 var(--ink); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.chMenu::before { content: ""; position: absolute; top: -8px; left: 22px; border: 7px solid transparent; border-bottom-color: var(--ink); border-top: 0; }
+.chMenuTitle { font: 800 11px var(--f-body); letter-spacing: 0.06em; color: #7a6450; padding: 2px 6px 4px; }
+.chItem { display: grid; grid-template-columns: 54px 1fr auto; align-items: center; gap: 8px; width: 100%; font: 800 13px var(--f-body); color: var(--ink); background: transparent; border: 2px solid transparent; border-radius: 7px; padding: 6px 6px; cursor: pointer; text-align: left; font-variant-numeric: tabular-nums; }
+.chItem:hover:not(:disabled), .chItem:focus-visible { background: #fff8e8; border-color: var(--ink); outline: none; }
+.chItem.here { background: var(--ink); color: var(--paper); }
+.chItem.here .chCount { color: var(--paper-dim); }
+.chItem:disabled { cursor: default; opacity: 0.55; }
+.chName { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.chDot { width: 7px; height: 7px; border-radius: 50%; background: var(--lantern); box-shadow: 0 0 0 2px rgba(212, 68, 42, 0.3); }
+.chMeter { height: 6px; border-radius: 3px; background: rgba(43, 27, 17, 0.14); overflow: hidden; }
+.chItem.here .chMeter { background: rgba(242, 231, 205, 0.22); }
+.chMeter i { display: block; height: 100%; background: #6aa84f; border-radius: 3px; }
+.chMeter.busy i { background: var(--amber); }
+.chMeter.full i { background: var(--lantern); }
+.chCount { font-size: 12px; color: #7a6450; white-space: nowrap; }
+.miniBtn:focus-visible, .chTrigger:focus-visible, .venueCard:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* venue picker at the door */

@@ -1,8 +1,9 @@
 "use client";
 
-import { CHANNEL_COUNT, VENUES, VENUE_INFO, type Venue } from "@/lib/game/constants";
+import { VENUES, VENUE_INFO, type Venue } from "@/lib/game/constants";
 import type { Engine, Snapshot } from "@/lib/game/engine";
 import { UI } from "@/lib/game/i18n";
+import { ChannelPicker } from "./ChannelPicker";
 
 export function TopBar({ snap, engine, onGo }: { snap: Snapshot; engine: Engine; onGo: (venue: Venue, channel: number | null) => void }) {
   const T = UI[snap.lang];
@@ -21,22 +22,13 @@ export function TopBar({ snap, engine, onGo }: { snap: Snapshot; engine: Engine;
           <button className="miniBtn" type="button" onClick={() => onGo(other, null)}>
             {T.switchTo(VENUE_INFO[other][snap.lang])}
           </button>
-          <label className="chSelect">
-            <span className="sr">{T.channelAuto}</span>
-            <select
-              id="channel"
-              value={channel || ""}
-              onChange={(e) => onGo(snap.venue, Number(e.target.value))}
-              disabled={mode === "connecting"}
-            >
-              {!channel && <option value="">{T.channelAuto}</option>}
-              {Array.from({ length: CHANNEL_COUNT }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>
-                  {T.channel(n)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ChannelPicker
+            lang={snap.lang}
+            current={channel}
+            counts={snap.net.counts}
+            disabled={mode === "connecting"}
+            onPick={(ch) => onGo(snap.venue, ch)}
+          />
         </div>
       </div>
       <div className="topBtns">

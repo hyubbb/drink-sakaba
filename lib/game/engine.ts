@@ -31,7 +31,8 @@ export type Snapshot = {
   dish: { name: string; left: number } | null;
   hint: string | null;
   stats: { drank: number; poured: number; got: number };
-  net: { mode: "connecting" | "live" | "solo" | "offline"; people: number; channel: number };
+  /** counts: people per channel of this venue (index = channel number), null when unknown */
+  net: { mode: "connecting" | "live" | "solo" | "offline"; people: number; channel: number; counts: Record<number, number> | null };
   toast: { id: number; text: string } | null;
 };
 
@@ -315,6 +316,7 @@ export class Engine {
     this.disposers.push(
       room.onStatus((s: NetStatus) => { this.netMode = s === "live" ? "live" : s === "offline" ? "offline" : "connecting"; if (s === "live") { this.pushPresence(); this.sendPosition(); } this.refresh(true); }),
       room.onPeers((peers, joined) => this.onPeers(peers, joined)),
+      room.onChannelCounts(() => this.refresh(true)),
       // my table channel is up: tell the table my glass and plate
       room.onTableReady(() => setTimeout(() => this.sendState(), 100 + Math.random() * 400)),
       room.on("mv", (d) => this.onMove(d)),
@@ -991,7 +993,7 @@ export class Engine {
       dish: plate ? { name: this.dishes[plate.d][this.lang], left: plate.l } : null,
       hint,
       stats: { ...this.stats },
-      net: { mode: this.netMode, people: this.remotes.size + 1, channel: this.room?.shop ?? 0 },
+      net: { mode: this.netMode, people: this.remotes.size + 1, channel: this.room?.shop ?? 0, counts: this.room?.channelCounts() ?? null },
       toast: this.toastState,
     };
   }
