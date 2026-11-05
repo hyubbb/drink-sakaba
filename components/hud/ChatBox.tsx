@@ -12,7 +12,7 @@ type Props = {
   onSend: (text: string) => boolean;
 };
 
-/** One-line free chat for the people at my table: 30 characters, one line every 10 seconds. */
+/** One-line free chat for the people at my table: 30 characters, one line every 7 seconds. */
 export function ChatBox({ lang, seated, readyAt, onSend }: Props) {
   const T = UI[lang];
   const [text, setText] = useState("");

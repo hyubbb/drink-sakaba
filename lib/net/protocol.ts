@@ -47,7 +47,7 @@ export type EventPayload =
   | { id: string; k: "pour"; to: string }
   | { id: string; k: "eat"; pl: string; d: number }
   | { id: string; k: "say"; p: string }
-  /** free chat line, table channel only, ≤ 30 characters, at most one per 10 s */
+  /** free chat line, table channel only, ≤ 30 characters, at most one per 7 s */
   | { id: string; k: "chat"; t: string };
 
 export type Topic = "mv" | "st" | "ev";

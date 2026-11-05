@@ -1,12 +1,12 @@
 /** Free chat: only the people at the same table see it. Short lines, no translation. */
 
 export const CHAT_MAX = 30;
-export const CHAT_COOLDOWN_MS = 10_000;
+export const CHAT_COOLDOWN_MS = 7_000;
 /** Receivers drop a line from someone who spoke again sooner than this (a modified client). */
-export const CHAT_MIN_GAP_MS = 9_000;
+export const CHAT_MIN_GAP_MS = 6_000;
 
 // control, zero-width and bidi-override characters that can hide or reorder text
-const INVISIBLE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁠-⁩﻿]/g;
+const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
 const LINK = /\b(?:https?:\/\/|www\.)\S+|\b[\w-]+\.(?:com|net|org|kr|jp|io|me|co|link|xyz|app|gg|ly)(?:\/\S*)?/gi;
 // phone numbers and similar long digit runs (010-1234-5678, 090 1234 5678, +82...)
 const PHONE = /\+?\d[\d\s.-]{7,}\d/g;
