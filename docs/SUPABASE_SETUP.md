@@ -1,4 +1,4 @@
-# Supabase setup for drink-sakaba (souka 酒場)
+# Supabase setup for drink-sakaba (술집 酒場)
 
 This document is written for an agent (or person) setting up the backend. It covers everything the
 app needs from Supabase and Vercel. Do the steps in order and report the results listed under

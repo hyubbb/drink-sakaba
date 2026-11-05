@@ -35,9 +35,9 @@ const baseBlush = basic(0xf09aa4);
 const SKIN = new THREE.Color(0xfaf3e6), FLUSH = new THREE.Color(0xf07a68);
 const BLUSH = new THREE.Color(0xf09aa4), BLUSH_HOT = new THREE.Color(0xe0484a);
 
-/** souka-style mascot: round head, dot eyes, blush, hachimaki headband in the player's colour. */
+/** Mascot: round head, dot eyes, blush, hachimaki headband in the player's colour. */
 /**
- * souka-style mascot. `bandOrDrink` is the headband colour (defaults to `col`) or, when omitted,
+ * The mascot. `bandOrDrink` is the headband colour (defaults to `col`) or, when omitted,
  * the venue's drink style, which shapes the glass and bottle the character holds.
  */
 export function makeChar(parent: THREE.Object3D, col: number, bodyCol: number, bandOrDrink?: number | DrinkStyle, drinkArg?: DrinkStyle): Avatar {

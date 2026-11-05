@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "souka 酒場",
+  title: "술집 酒場",
   description: "모르는 사람과 마주 앉아 한 잔씩 따라 주는 온라인 혼술집 · 知らない誰かと向かい合って、一杯ずつ注ぎあう店",
 };
 

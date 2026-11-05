@@ -27,8 +27,8 @@ export const VENUE_DRINK: Record<Venue, DrinkStyle> = {
 };
 
 export const VENUE_INFO: Record<Venue, { ko: string; ja: string; sign: string; npc: { ko: string; ja: string } }> = {
-  izakaya: { ko: "이자카야", ja: "居酒屋", sign: "souka 酒場", npc: { ko: "대장", ja: "大将" } },
-  pocha: { ko: "포차", ja: "ポチャ", sign: "souka 포차", npc: { ko: "이모", ja: "おばちゃん" } },
+  izakaya: { ko: "이자카야", ja: "居酒屋", sign: "술집 酒場", npc: { ko: "대장", ja: "大将" } },
+  pocha: { ko: "포차", ja: "ポチャ", sign: "술집 포차", npc: { ko: "이모", ja: "おばちゃん" } },
 };
 
 /** Movement broadcast rate while walking (Hz). Seated people send nothing. */

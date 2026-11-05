@@ -1,4 +1,4 @@
-# souka 酒場 (drink-sakaba)
+# 술집 酒場 (drink-sakaba)
 
 모르는 사람과 6인 테이블에 마주 앉아 맥주를 따라 주고, 정해진 문장으로만 이야기하는 레트로 3D 온라인 혼술집.
 知らない誰かと向かい合って、一杯ずつ注ぎあう店。
@@ -60,7 +60,7 @@ components/
 lib/game/
   engine.ts             게임 상태·규칙·프레임 루프·네트워크 처리 (Three.js, React 밖)
   world.ts              가게(이자카야/포차), 테이블, 자리, 잔, 공유 접시
-  character.ts          souka 캐릭터와 애니메이션
+  character.ts          캐릭터와 애니메이션
   constants.ts          규칙 수치, 안주 목록
   i18n.ts               문장과 UI 문구 (ko/ja)
   sound.ts              합성 효과음

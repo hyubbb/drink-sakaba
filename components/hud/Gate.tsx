@@ -17,7 +17,7 @@ export function Gate({ initialNick, initialLang, onEnter }: { initialNick: strin
         }}
       >
         <h1>
-          souka <span>酒場</span>
+          술집 <span>酒場</span>
         </h1>
         <p>
           {UI.ko.gateTitle}
