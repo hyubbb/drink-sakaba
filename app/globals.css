@@ -154,3 +154,15 @@ body {
 .venueCard:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
 .picker > .btn { align-self: center; }
 @media (max-width: 420px) { .venues { grid-template-columns: 1fr; } }
+
+/* free chat line at the top of the phrase sheet */
+.chat { display: flex; align-items: center; gap: 6px; padding-bottom: 8px; border-bottom: 2px dashed rgba(43, 27, 17, 0.25); }
+.chat input { flex: 1; min-width: 0; font: 700 15px var(--f-body); color: var(--ink); background: #fff8e8; border: 2px solid var(--ink); border-radius: 8px; padding: 9px 10px; -webkit-user-select: text; user-select: text; }
+.chat input::placeholder { color: #9a8470; }
+.chat input:disabled { background: var(--paper-dim); }
+.chat input:focus-visible { outline: 3px solid var(--amber); outline-offset: 1px; }
+.chatCount { font-size: 11px; color: #7a6450; font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+.chatSend { font: 800 14px var(--f-body); min-width: 64px; background: var(--lantern); color: var(--paper); border: 2px solid #5a160b; border-radius: 8px; padding: 9px 10px; cursor: pointer; box-shadow: 0 3px 0 #5a160b; font-variant-numeric: tabular-nums; }
+.chatSend:disabled { background: var(--paper-dim); color: #8b7a63; border-color: #8b7a63; box-shadow: 0 3px 0 #8b7a63; cursor: default; }
+.chatSend:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+.bubble.free { white-space: normal; max-width: 230px; text-align: center; word-break: keep-all; overflow-wrap: anywhere; }

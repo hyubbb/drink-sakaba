@@ -6,6 +6,7 @@ import {
 import { type Avatar, disposeChar, makeChar, playAnim, updateChar } from "./character";
 import { PHRASE_MAP, UI, WOBBLE_PHRASES, type Lang } from "./i18n";
 import { sound } from "./sound";
+import { CHAT_COOLDOWN_MS, CHAT_MIN_GAP_MS, cleanChat } from "./chat";
 import { buildWorld, type Seat, type World } from "./world";
 import type { EventPayload, MovePayload, NetRoom, NetStatus, PlateState, PresencePayload, StatePayload } from "../net/protocol";
 import { PROTOCOL_VERSION } from "../net/protocol";
@@ -28,6 +29,8 @@ export type Snapshot = {
   selTarget: string | null;
   canPour: boolean;
   canDrink: boolean;
+  /** free chat: performance.now() when I may chat again (0 = now) */
+  chatReadyAt: number;
   dish: { name: string; left: number } | null;
   hint: string | null;
   stats: { drank: number; poured: number; got: number };
@@ -47,6 +50,7 @@ type Remote = {
   cheerAt: number;
   drunk: number;
   flushAt: number;
+  chatAt: number;
 };
 type Bubble = { el: HTMLDivElement; until: number };
 type PlateRuntime = { d: number; l: number; v: number };
@@ -134,6 +138,7 @@ export class Engine {
   private myCheerAt = -1e9;
   private masterWait = 0;
   private sayCooldown = 0;
+  private chatReadyAt = 0;
   private pourCooldown = 0;
   private lastMove = 0;
   private wasWalking = false;
@@ -294,6 +299,25 @@ export class Engine {
     this.botHear(k);
   }
 
+  /**
+   * Free chat. Only while seated, and only the people at my table receive it.
+   * Returns false when nothing was sent (standing, cooling down, or empty after cleaning).
+   */
+  chat(raw: string): boolean {
+    if (!this.me.seat || !this.myBubble || !this.myAv || now() < this.chatReadyAt) return false;
+    const t = cleanChat(raw);
+    if (!t) return false;
+    this.chatReadyAt = now() + CHAT_COOLDOWN_MS;
+    this.sendEv({ id: this.myId, k: "chat", t });
+    this.showText(this.myBubble, t);
+    if (!this.myAv.anim) playAnim(this.myAv, "talk");
+    this.sound.pop();
+    if (this.bot.active && this.isOpposite(this.me.seat, BOT_SEAT))
+      this.botSay(["listening", "agree", "lol", "really", "metoo"][(Math.random() * 5) | 0], 1100 + Math.random() * 800);
+    this.refresh(true);
+    return true;
+  }
+
   private disposed = false;
   dispose() {
     this.disposed = true;
@@ -350,7 +374,7 @@ export class Engine {
   private sendEv(e: EventPayload) {
     if (!this.room) return;
     if (this.me.seat) this.room.send("ev", e, "table");
-    else if (e.k === "say") this.room.send("ev", e, "shop");
+    else if (e.k === "say") this.room.send("ev", e, "shop"); // free chat never goes to the whole shop
   }
 
   private onPeers(peers: Map<string, PresencePayload>, joined: string[]) {
@@ -418,6 +442,16 @@ export class Engine {
         if (sameTable) this.sound.eat();
         if (this.world.plates[e.pl] && r.pres.seat && this.world.seats[r.pres.seat]?.plate === e.pl) this.takePiece(e.pl);
         break;
+      case "chat": {
+        // table channel only; check the sender sits at my table and is not flooding
+        if (!this.sameTableAsMe(r.pres.seat) || now() - r.chatAt < CHAT_MIN_GAP_MS) break;
+        const t = cleanChat(e.t);
+        if (!t) break;
+        r.chatAt = now();
+        this.showText(r.bubble, t);
+        if (!r.av.anim) playAnim(r.av, "talk");
+        break;
+      }
       case "say":
         if (PHRASE_MAP[e.p]) { this.showBubble(r.bubble, e.p); if (WOBBLE_PHRASES.has(e.p)) playAnim(r.av, "wobble"); else if (!r.av.anim) playAnim(r.av, "talk"); }
         break;
@@ -429,7 +463,7 @@ export class Engine {
     const av = makeChar(this.scene, pres.col, 0x3b4a5e, this.drinkStyle);
     av.root.position.set(0, 0, 4);
     // glass level of people at other tables is never sent to me; show them mid-glass
-    const r: Remote = { id, pres, glass: Math.max(1, this.full - 1), pl: null, x: 0, z: 4, ry: Math.PI, hasPos: false, av, label: this.mkLabel("", false), bubble: this.mkBubble(), cheerAt: -1e9, drunk: 0, flushAt: -1e9 };
+    const r: Remote = { id, pres, glass: Math.max(1, this.full - 1), pl: null, x: 0, z: 4, ry: Math.PI, hasPos: false, av, label: this.mkLabel("", false), bubble: this.mkBubble(), cheerAt: -1e9, drunk: 0, flushAt: -1e9, chatAt: -1e9 };
     this.setRemoteLabel(r);
     this.remotes.set(id, r);
   }
@@ -697,9 +731,17 @@ export class Engine {
   private showBubble(b: Bubble, key: string) {
     const p = PHRASE_MAP[key];
     if (!p) return;
+    b.el.classList.remove("free");
     b.el.textContent = p[this.lang];
     b.el.hidden = false;
     b.until = now() + 3600;
+  }
+  /** free text: shown as typed (textContent, never HTML), a little longer than phrases */
+  private showText(b: Bubble, text: string) {
+    b.el.classList.add("free");
+    b.el.textContent = text;
+    b.el.hidden = false;
+    b.until = now() + 5500;
   }
   private tmpV = new THREE.Vector3();
   private placeDom(el: HTMLElement, pos: THREE.Vector3, yOff: number) {
@@ -990,6 +1032,7 @@ export class Engine {
       selTarget: this.selTarget,
       canPour: !!cur && cur.glass < this.full && now() >= this.pourCooldown,
       canDrink: this.me.glass > 0,
+      chatReadyAt: this.chatReadyAt,
       dish: plate ? { name: this.dishes[plate.d][this.lang], left: plate.l } : null,
       hint,
       stats: { ...this.stats },
